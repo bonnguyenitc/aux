@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -38,10 +39,36 @@ pub struct AiConfig {
     pub provider: String,
     #[serde(default = "default_ai_model")]
     pub model: String,
-    #[serde(default = "default_api_key_env")]
-    pub api_key_env: String,
     #[serde(default)]
-    pub ollama_host: Option<String>,
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub profiles: HashMap<String, AiProfile>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AiProfile {
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedAiConfig {
+    pub provider: String,
+    pub model: String,
+    pub api_key: Option<String>,
+    pub base_url: String,
 }
 
 fn default_ai_provider() -> String {
@@ -50,8 +77,84 @@ fn default_ai_provider() -> String {
 fn default_ai_model() -> String {
     "gpt-4o-mini".to_string()
 }
-fn default_api_key_env() -> String {
-    "OPENAI_API_KEY".to_string()
+
+pub fn default_base_url(provider: &str) -> String {
+    match provider {
+        "openai" => "https://api.openai.com/v1".to_string(),
+        "anthropic" => "https://api.anthropic.com".to_string(),
+        "gemini" => "https://generativelanguage.googleapis.com".to_string(),
+        "ollama" => "http://localhost:11434".to_string(),
+        _ => String::new(),
+    }
+}
+
+impl AiConfig {
+    /// Resolve a profile (or default) into a flat, usable config
+    pub fn resolve(&self, profile_name: Option<&str>) -> anyhow::Result<ResolvedAiConfig> {
+        let (provider, model, api_key, api_key_env, base_url) = match profile_name {
+            Some(name) => {
+                let profile = self.profiles.get(name).with_context(|| {
+                    let available: Vec<&str> =
+                        self.profiles.keys().map(|s| s.as_str()).collect();
+                    if available.is_empty() {
+                        format!("Profile '{}' not found. No profiles configured.", name)
+                    } else {
+                        format!(
+                            "Profile '{}' not found. Available: {}",
+                            name,
+                            available.join(", ")
+                        )
+                    }
+                })?;
+                (
+                    profile.provider.as_deref().unwrap_or(&self.provider),
+                    profile.model.as_deref().unwrap_or(&self.model),
+                    profile.api_key.as_ref().or(self.api_key.as_ref()),
+                    profile.api_key_env.as_ref().or(self.api_key_env.as_ref()),
+                    profile.base_url.as_ref().or(self.base_url.as_ref()),
+                )
+            }
+            None => (
+                self.provider.as_str(),
+                self.model.as_str(),
+                self.api_key.as_ref(),
+                self.api_key_env.as_ref(),
+                self.base_url.as_ref(),
+            ),
+        };
+
+        // Resolve API key: config value → env var → None
+        let resolved_key = api_key.cloned().filter(|k| !k.is_empty()).or_else(|| {
+            api_key_env
+                .and_then(|var| std::env::var(var).ok().filter(|v| !v.is_empty()))
+        });
+
+        // Resolve base_url: explicit → provider default
+        let resolved_url = base_url
+            .cloned()
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(|| default_base_url(provider));
+
+        Ok(ResolvedAiConfig {
+            provider: provider.to_string(),
+            model: model.to_string(),
+            api_key: resolved_key,
+            base_url: resolved_url,
+        })
+    }
+}
+
+/// Resolve with CLI flag overrides
+pub fn resolve_with_overrides(
+    ai: &AiConfig,
+    profile: Option<&str>,
+    model_override: Option<&str>,
+) -> anyhow::Result<ResolvedAiConfig> {
+    let mut resolved = ai.resolve(profile)?;
+    if let Some(m) = model_override {
+        resolved.model = m.to_string();
+    }
+    Ok(resolved)
 }
 
 fn default_player_backend() -> String {

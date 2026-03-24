@@ -85,26 +85,106 @@ You: tóm tắt video này đi
 You: /quit
 ```
 
+## Configuration
+
+### Player
+
+```bash
+duet config player                       # Show current player settings
+duet config player set --volume 80       # Set default volume (0-100)
+duet config player set --search-results 10  # Number of search results
+duet config player set --backend mpv     # Player backend
+```
+
+### YouTube
+
+```bash
+duet config youtube                      # Show current YouTube settings
+duet config youtube set --format m4a     # Preferred audio format (m4a, opus, webm)
+duet config youtube set --backend yt-dlp # YouTube backend
+```
+
 ### AI Configuration
 
-Add to `~/.config/duet/config.toml`:
+#### Interactive Setup (recommended)
+
+```bash
+duet config ai --setup        # Guided wizard — pick provider, model, paste API key
+```
+
+#### One-liner Setup
+
+```bash
+# Set default AI provider
+duet config ai set --provider openai --model gpt-4.1-mini --api-key-env OPENAI_API_KEY
+
+# Or paste your key directly
+duet config ai set --provider openai --model gpt-4.1-mini --api-key sk-xxx
+```
+
+#### Profiles
+
+Switch between AI configs without editing files:
+
+```bash
+# Add profiles
+duet config ai add-profile deep --provider anthropic --model claude-sonnet-4-6 --api-key-env ANTHROPIC_API_KEY
+duet config ai add-profile local --provider ollama --model llama4 --base-url http://localhost:11434
+
+# Use profiles
+duet chat "summarize" --profile deep
+duet chat "summarize" --profile local
+
+# Manage profiles
+duet config ai list-profiles
+duet config ai remove-profile deep
+duet config ai test --profile local
+```
+
+#### Custom Providers (OpenAI-compatible)
+
+Any OpenAI-compatible API works with `--base-url`:
+
+```bash
+duet config ai add-profile groq \
+  --provider openai \
+  --model llama-3.3-70b \
+  --base-url https://api.groq.com/openai/v1 \
+  --api-key-env GROQ_API_KEY
+```
+
+#### Config File
+
+`~/.config/duet/config.toml`:
 
 ```toml
 [ai]
-provider = "openai"           # "openai" | "anthropic" | "gemini" | "ollama"
-model = "gpt-4o-mini"
+provider = "openai"
+model = "gpt-4.1-mini"
 api_key_env = "OPENAI_API_KEY"
 
-# For local AI (no API key needed):
-# [ai]
-# provider = "ollama"
-# model = "llama3"
+[ai.profiles.deep]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[ai.profiles.local]
+provider = "ollama"
+model = "llama4"
+base_url = "http://localhost:11434"
 ```
 
-Then set your API key:
+#### CLI Reference
 
 ```bash
-export OPENAI_API_KEY=your-key-here
+duet config ai                  # Show current config + profiles
+duet config ai --setup          # Interactive wizard
+duet config ai set [FLAGS]      # Set default config
+duet config ai add-profile NAME [FLAGS]  # Create/update profile
+duet config ai remove-profile NAME       # Delete profile
+duet config ai list-profiles    # List all profiles
+duet config ai test             # Test default connection
+duet config ai test --profile X # Test specific profile
 ```
 
 ## Architecture

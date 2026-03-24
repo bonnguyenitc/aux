@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::config::Config;
+use crate::config::ResolvedAiConfig;
 use crate::youtube::VideoInfo;
 use super::transcript::Transcript;
 
@@ -95,19 +95,13 @@ impl VideoContext {
 pub async fn chat(
     context: &mut VideoContext,
     user_message: &str,
-    config: &Config,
+    resolved: &ResolvedAiConfig,
 ) -> Result<String> {
-    let ai_config = config
-        .ai
-        .as_ref()
-        .context("AI not configured. Add [ai] section to ~/.config/duet/config.toml")?;
+    let api_key = resolved.api_key.as_deref().unwrap_or("");
 
-    let api_key = std::env::var(&ai_config.api_key_env).with_context(|| {
-        format!(
-            "API key not found. Set environment variable: {}",
-            ai_config.api_key_env
-        )
-    })?;
+    if api_key.is_empty() && resolved.provider != "ollama" {
+        bail!("API key not found. Run: duet config ai --setup");
+    }
 
     // Add user message to history
     context.chat_history.push(ChatMessage {
@@ -117,20 +111,9 @@ pub async fn chat(
 
     let messages = context.build_messages(user_message);
 
-    let (api_url, body) = match ai_config.provider.as_str() {
-        "openai" => {
-            let url = "https://api.openai.com/v1/chat/completions".to_string();
-            let body = serde_json::json!({
-                "model": &ai_config.model,
-                "messages": messages,
-                "max_tokens": 1000,
-                "temperature": 0.7
-            });
-            (url, body)
-        }
+    let (api_url, body) = match resolved.provider.as_str() {
         "anthropic" => {
-            let url = "https://api.anthropic.com/v1/messages".to_string();
-            // Convert messages format for Anthropic
+            let url = format!("{}/v1/messages", resolved.base_url);
             let system_msg = messages
                 .first()
                 .and_then(|m| m["content"].as_str())
@@ -146,7 +129,7 @@ pub async fn chat(
                 })
                 .collect();
             let body = serde_json::json!({
-                "model": &ai_config.model,
+                "model": &resolved.model,
                 "system": system_msg,
                 "messages": user_messages,
                 "max_tokens": 1000
@@ -155,8 +138,8 @@ pub async fn chat(
         }
         "gemini" => {
             let url = format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-                ai_config.model, api_key
+                "{}/v1beta/models/{}:generateContent?key={}",
+                resolved.base_url, resolved.model, api_key
             );
             let contents: Vec<_> = messages
                 .iter()
@@ -172,44 +155,51 @@ pub async fn chat(
                     })
                 })
                 .collect();
-            let body = serde_json::json!({
-                "contents": contents
-            });
+            let body = serde_json::json!({ "contents": contents });
             (url, body)
         }
         "ollama" => {
-            let host = ai_config
-                .ollama_host
-                .as_deref()
-                .unwrap_or("http://localhost:11434");
-            let url = format!("{}/api/chat", host);
+            let url = format!("{}/api/chat", resolved.base_url);
             let body = serde_json::json!({
-                "model": &ai_config.model,
+                "model": &resolved.model,
                 "messages": messages,
                 "stream": false
             });
             (url, body)
         }
-        provider => bail!("Unsupported AI provider: {}", provider),
+        _ => {
+            // OpenAI-compatible (openai + any unknown provider)
+            let url = format!("{}/chat/completions", resolved.base_url);
+            let body = serde_json::json!({
+                "model": &resolved.model,
+                "messages": messages,
+                "max_tokens": 1000,
+                "temperature": 0.7
+            });
+            (url, body)
+        }
     };
 
     let client = reqwest::Client::new();
     let mut request = client.post(&api_url).json(&body);
 
-    // Set auth headers based on provider
-    match ai_config.provider.as_str() {
-        "openai" => {
-            request = request.header("Authorization", format!("Bearer {}", api_key));
-        }
+    // Set auth headers
+    match resolved.provider.as_str() {
         "anthropic" => {
             request = request
-                .header("x-api-key", &api_key)
+                .header("x-api-key", api_key)
                 .header("anthropic-version", "2023-06-01");
         }
         "gemini" => {
-            // Key is in URL for Gemini
+            // Key is in URL
         }
-        _ => {}
+        "ollama" => {
+            // No auth
+        }
+        _ => {
+            // OpenAI-compatible: Bearer token
+            request = request.header("Authorization", format!("Bearer {}", api_key));
+        }
     }
 
     let response = request.send().await.context("Failed to call AI API")?;
@@ -222,13 +212,8 @@ pub async fn chat(
 
     let response_json: serde_json::Value = response.json().await?;
 
-    // Extract response text based on provider
-    let ai_text = match ai_config.provider.as_str() {
-        "openai" | "ollama" => response_json["choices"][0]["message"]["content"]
-            .as_str()
-            .or_else(|| response_json["message"]["content"].as_str())
-            .unwrap_or("(no response)")
-            .to_string(),
+    // Extract response text
+    let ai_text = match resolved.provider.as_str() {
         "anthropic" => response_json["content"][0]["text"]
             .as_str()
             .unwrap_or("(no response)")
@@ -237,7 +222,17 @@ pub async fn chat(
             .as_str()
             .unwrap_or("(no response)")
             .to_string(),
-        _ => "(unsupported provider)".to_string(),
+        "ollama" => response_json["message"]["content"]
+            .as_str()
+            .unwrap_or("(no response)")
+            .to_string(),
+        _ => {
+            // OpenAI-compatible
+            response_json["choices"][0]["message"]["content"]
+                .as_str()
+                .unwrap_or("(no response)")
+                .to_string()
+        }
     };
 
     // Add assistant response to history

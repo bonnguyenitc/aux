@@ -1,6 +1,7 @@
 mod ai;
 mod cli;
 mod config;
+mod config_cmd;
 mod error;
 mod interactive;
 mod library;
@@ -16,7 +17,7 @@ use std::io::{self, Write};
 use std::time::Instant;
 
 use ai::{ai_chat, fetch_transcript, VideoContext};
-use cli::{Cli, Commands, FavAction, QueueAction};
+use cli::{Cli, Commands, AiAction, ConfigAction, FavAction, PlayerAction, QueueAction, YoutubeAction};
 use config::Config;
 use interactive::{run_interactive, InteractiveAction};
 use library::Database;
@@ -78,13 +79,13 @@ async fn main() -> Result<()> {
                 format!("(detached volume set to {} not yet implemented)", level).dimmed()
             );
         }
-        Commands::Chat { message: _ } => {
+        Commands::Chat { message: _, model: _, profile: _ } => {
             println!(
                 "  {}",
                 "Chat requires a video playing. Use: duet search → play → [c] to chat".dimmed()
             );
         }
-        Commands::Suggest => {
+        Commands::Suggest { model: _, profile: _ } => {
             println!(
                 "  {}",
                 "Suggest requires a video playing. Use: duet search → play → [c] to chat"
@@ -99,6 +100,10 @@ async fn main() -> Result<()> {
         }
         Commands::Queue { action } => {
             cmd_queue(&db, action, &config).await?;
+        }
+        Commands::Config { action } => {
+            let mut cfg = Config::load()?;
+            cmd_config(action, &mut cfg).await?;
         }
     }
 
@@ -308,17 +313,18 @@ async fn run_chat_mode(context: &mut VideoContext, config: &Config) -> Result<()
     if config.ai.is_none() {
         println!(
             "  {}",
-            "⚠️  AI not configured. Add to ~/.config/duet/config.toml:".yellow()
+            "⚠️  AI not configured. Run: duet config ai --setup".yellow()
         );
-        println!("  {}", "[ai]".dimmed());
-        println!("  {}", "provider = \"openai\"".dimmed());
-        println!("  {}", "model = \"gpt-4o-mini\"".dimmed());
-        println!("  {}", "api_key_env = \"OPENAI_API_KEY\"".dimmed());
-        println!();
-        println!("  {}", "Then set: export OPENAI_API_KEY=your-key".dimmed());
         println!();
         return Ok(());
     }
+
+    // Resolve AI config (default profile, no overrides)
+    let resolved = config
+        .ai
+        .as_ref()
+        .unwrap()
+        .resolve(None)?;
 
     println!("  {} /quit to exit chat\n", "💡".dimmed());
 
@@ -337,15 +343,23 @@ async fn run_chat_mode(context: &mut VideoContext, config: &Config) -> Result<()
             break;
         }
 
-        print!("  {} ", "🤖:".bold().cyan());
-        io::stdout().flush()?;
+        let spinner = indicatif::ProgressBar::new_spinner();
+        spinner.set_style(
+            indicatif::ProgressStyle::with_template("  🤖:{spinner:.cyan} {msg}")
+                .unwrap()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+        );
+        spinner.set_message("Thinking...");
+        spinner.enable_steady_tick(std::time::Duration::from_millis(80));
 
-        match ai_chat(context, input, config).await {
+        match ai_chat(context, input, &resolved).await {
             Ok(response) => {
-                println!("{}\n", response);
+                spinner.finish_and_clear();
+                println!("  {} {}\n", "🤖:".bold().cyan(), response);
             }
             Err(e) => {
-                println!("{}\n", format!("Error: {}", e).red());
+                spinner.finish_and_clear();
+                println!("  {} {}\n", "🤖:".bold().cyan(), format!("Error: {}", e).red());
             }
         }
     }
@@ -766,5 +780,91 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
+    Ok(())
+}
+
+// ─── Config Command ───────────────────────────────────────────
+
+async fn cmd_config(action: Option<ConfigAction>, config: &mut Config) -> Result<()> {
+    use config_cmd as cc;
+    match action {
+        None => {
+            cc::show_all(config);
+        }
+        Some(ConfigAction::Ai { setup: true, .. }) => {
+            cc::run_ai_wizard(config).await?;
+        }
+        Some(ConfigAction::Ai {
+            setup: false,
+            action: None,
+        }) => {
+            cc::show_ai(config);
+        }
+        Some(ConfigAction::Ai {
+            setup: false,
+            action: Some(ai_action),
+        }) => match ai_action {
+            AiAction::Set {
+                provider,
+                model,
+                api_key,
+                api_key_env,
+                base_url,
+            } => {
+                cc::ai_set(config, provider, model, api_key, api_key_env, base_url)?;
+            }
+            AiAction::AddProfile {
+                name,
+                provider,
+                model,
+                api_key,
+                api_key_env,
+                base_url,
+            } => {
+                cc::add_profile(
+                    config,
+                    &name,
+                    provider,
+                    model,
+                    api_key,
+                    api_key_env,
+                    base_url,
+                )?;
+            }
+            AiAction::RemoveProfile { name } => {
+                cc::remove_profile(config, &name)?;
+            }
+            AiAction::ListProfiles => {
+                cc::list_profiles(config);
+            }
+            AiAction::Test { profile } => {
+                cc::run_test(config, profile.as_deref()).await?;
+            }
+        },
+        Some(ConfigAction::Player { action: None }) => {
+            cc::show_player(config);
+        }
+        Some(ConfigAction::Player { action: Some(PlayerAction::Set { volume, search_results, backend }) }) => {
+            cc::player_set(config, volume, search_results, backend)?;
+        }
+        Some(ConfigAction::Youtube { action: None }) => {
+            cc::show_youtube(config);
+        }
+        Some(ConfigAction::Youtube { action: Some(YoutubeAction::Set { format, backend }) }) => {
+            cc::youtube_set(config, format, backend)?;
+        }
+        Some(ConfigAction::Set { key, value }) => {
+            cc::set_key(config, &key, &value)?;
+        }
+        Some(ConfigAction::Get { key }) => {
+            cc::get_key(config, &key)?;
+        }
+        Some(ConfigAction::Path) => {
+            cc::show_path();
+        }
+        Some(ConfigAction::Reset { force }) => {
+            cc::reset_config(force)?;
+        }
+    }
     Ok(())
 }
