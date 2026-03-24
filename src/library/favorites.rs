@@ -65,6 +65,7 @@ pub fn get_favorites(db: &Database) -> Result<Vec<FavoriteEntry>> {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields populated from DB; not all are displayed in current UI
 pub struct FavoriteEntry {
     pub video_id: String,
     pub title: String,

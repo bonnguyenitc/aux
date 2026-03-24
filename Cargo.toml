@@ -38,10 +38,16 @@ reqwest = { version = "0.12", features = ["json"] }
 
 # Database (Phase 3: Library)
 rusqlite = { version = "0.31", features = ["bundled"] }
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 
 # TUI (Phase 4)
 ratatui = "0.29"
+
+# Player enhancements (Phase 5)
+fastrand = "2"
+log = "0.4"
+env_logger = "0.11"
+libc = "0.2"
 
 [dev-dependencies]
 assert_cmd = "2"

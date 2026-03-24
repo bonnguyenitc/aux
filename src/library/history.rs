@@ -71,6 +71,52 @@ pub fn get_today_history(db: &Database) -> Result<Vec<HistoryEntry>> {
     Ok(entries)
 }
 
+/// Get history since a given UTC datetime string (e.g. "2026-03-17 00:00:00")
+pub fn get_history_since(db: &Database, since: &str) -> Result<Vec<HistoryEntry>> {
+    let conn = db.connection();
+    let mut stmt = conn.prepare(
+        "SELECT video_id, title, channel, url, duration_secs, listened_secs, played_at
+         FROM history WHERE played_at >= ?1 ORDER BY played_at DESC",
+    )?;
+    let entries = stmt
+        .query_map([since], |row| {
+            Ok(HistoryEntry {
+                video_id: row.get(0)?,
+                title: row.get(1)?,
+                channel: row.get(2)?,
+                url: row.get(3)?,
+                duration_secs: row.get(4)?,
+                listened_secs: row.get(5)?,
+                played_at: row.get(6)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(entries)
+}
+
+/// Get all history entries (no date filter, for all-time stats)
+pub fn get_all_history(db: &Database) -> Result<Vec<HistoryEntry>> {
+    let conn = db.connection();
+    let mut stmt = conn.prepare(
+        "SELECT video_id, title, channel, url, duration_secs, listened_secs, played_at
+         FROM history ORDER BY played_at DESC",
+    )?;
+    let entries = stmt
+        .query_map([], |row| {
+            Ok(HistoryEntry {
+                video_id: row.get(0)?,
+                title: row.get(1)?,
+                channel: row.get(2)?,
+                url: row.get(3)?,
+                duration_secs: row.get(4)?,
+                listened_secs: row.get(5)?,
+                played_at: row.get(6)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(entries)
+}
+
 #[derive(Debug, Clone)]
 pub struct HistoryEntry {
     pub video_id: String,

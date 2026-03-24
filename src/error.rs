@@ -1,6 +1,9 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+// All variants are part of the complete error taxonomy; some are only raised by
+// planned daemon/remote features not yet built into this binary.
+#[allow(dead_code)]
 pub enum DuetError {
     #[error("yt-dlp not found in PATH. Install it: brew install yt-dlp")]
     YtDlpNotFound,
@@ -25,6 +28,24 @@ pub enum DuetError {
 
     #[error("yt-dlp command failed: {0}")]
     YtDlpError(String),
+
+    #[error("No active duet session. Start one with: duet play <url>")]
+    NoActiveSession,
+
+    #[error("Another duet instance is already running (PID {pid})")]
+    AlreadyRunning { pid: u32 },
+
+    #[error("mpv process died unexpectedly. Try: duet play <url>")]
+    MpvDied,
+
+    #[error("Invalid speed: {0}. Must be 0.25-4.0")]
+    InvalidSpeed(f64),
+
+    #[error("Invalid volume: {0}. Must be 0-100")]
+    InvalidVolume(u8),
+
+    #[error("Failed to fetch stream URL for: {title}")]
+    StreamFetchFailed { title: String },
 
     #[error(transparent)]
     Io(#[from] std::io::Error),

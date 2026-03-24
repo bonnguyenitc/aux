@@ -1,7 +1,7 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct VideoInfo {
     pub id: String,
     pub title: String,
@@ -31,6 +31,7 @@ impl fmt::Display for VideoInfo {
 #[derive(Debug, Clone)]
 pub struct StreamUrl {
     pub audio_url: String,
+    #[allow(dead_code)] // Stored for future format/quality selection
     pub format: String,
 }
 

@@ -1,11 +1,13 @@
 use anyhow::{bail, Context, Result};
 use std::path::PathBuf;
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::UnixStream;
 use tokio::process::{Child, Command};
 use tokio::time::sleep;
 
-use crate::error::DuetError;
 use super::MediaPlayer;
+use crate::error::DuetError;
 
 const SOCKET_PATH: &str = "/tmp/duet-mpv.sock";
 
@@ -24,61 +26,64 @@ impl MpvPlayer {
         }
     }
 
-    /// Check if mpv is available in PATH
+    /// Create a player that connects to an existing mpv socket (for remote/detached commands)
+    pub fn connect_existing() -> Result<Self> {
+        let socket_path = PathBuf::from(SOCKET_PATH);
+        if !socket_path.exists() {
+            return Err(DuetError::NoActiveSession.into());
+        }
+        Ok(Self {
+            process: None,
+            socket_path,
+            playing: true,
+        })
+    }
+
+    /// Returns the IPC socket path for debugging and future external IPC use.
+    #[allow(dead_code)]
+    pub fn socket_path_str() -> &'static str {
+        SOCKET_PATH
+    }
+
     pub async fn check_available() -> Result<()> {
         let output = Command::new("mpv")
             .arg("--version")
             .output()
             .await
             .map_err(|_| DuetError::MpvNotFound)?;
-
         if !output.status.success() {
             return Err(DuetError::MpvNotFound.into());
         }
-
         Ok(())
     }
 
-    /// Clean up socket file if it exists from a previous run
     fn cleanup_socket(&self) {
         let _ = std::fs::remove_file(&self.socket_path);
     }
 
-    /// Send a JSON IPC command to mpv via the Unix socket
+    /// Send a JSON IPC command to mpv via Unix socket and return the response
     async fn send_ipc_command(&self, command: &serde_json::Value) -> Result<String> {
-        let cmd_str = serde_json::to_string(command)?;
-
-        let output = Command::new("sh")
-            .args([
-                "-c",
-                &format!(
-                    "echo '{}' | nc -U -w1 {}",
-                    cmd_str,
-                    self.socket_path.display()
-                ),
-            ])
-            .output()
+        let mut stream = UnixStream::connect(&self.socket_path)
             .await
-            .context("Failed to send IPC command to mpv")?;
+            .context("Failed to connect to mpv socket")?;
+        let mut cmd = serde_json::to_vec(command)?;
+        cmd.push(b'\n');
+        stream.write_all(&cmd).await?;
 
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        let mut reader = BufReader::new(stream);
+        let mut response = String::new();
+        reader.read_line(&mut response).await?;
+        Ok(response)
     }
 
-    /// Send mpv JSON IPC command
     async fn mpv_command(&self, args: &[&str]) -> Result<String> {
-        let command = serde_json::json!({
-            "command": args
-        });
+        let command = serde_json::json!({ "command": args });
         self.send_ipc_command(&command).await
     }
 
-    /// Get a property value from mpv
     async fn get_property(&self, name: &str) -> Result<serde_json::Value> {
-        let command = serde_json::json!({
-            "command": ["get_property", name]
-        });
+        let command = serde_json::json!({ "command": ["get_property", name] });
         let response = self.send_ipc_command(&command).await?;
-
         for line in response.lines() {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line) {
                 if let Some(data) = parsed.get("data") {
@@ -86,21 +91,18 @@ impl MpvPlayer {
                 }
             }
         }
-
         bail!("Could not get property: {}", name);
     }
 
-    /// Get current volume level
-    pub async fn get_property_volume(&self) -> Result<u8> {
-        let value = self.get_property("volume").await?;
-        let vol = value.as_f64().unwrap_or(80.0) as u8;
-        Ok(vol.min(100))
+    async fn set_property(&self, name: &str, value: &serde_json::Value) -> Result<()> {
+        let command = serde_json::json!({ "command": ["set_property", name, value] });
+        self.send_ipc_command(&command).await?;
+        Ok(())
     }
 }
 
 impl MediaPlayer for MpvPlayer {
     async fn play(&mut self, url: &str, _title: &str) -> Result<()> {
-        // Stop any existing playback
         self.stop().await.ok();
         self.cleanup_socket();
 
@@ -108,6 +110,7 @@ impl MediaPlayer for MpvPlayer {
             .args([
                 "--no-video",
                 &format!("--input-ipc-server={}", self.socket_path.display()),
+                "--input-media-keys=yes",
                 "--really-quiet",
                 url,
             ])
@@ -120,25 +123,22 @@ impl MediaPlayer for MpvPlayer {
         self.process = Some(child);
         self.playing = true;
 
-        // Wait for socket to be ready
-        for _ in 0..20 {
+        // Wait for socket to become available
+        for _ in 0..30 {
             if self.socket_path.exists() {
                 return Ok(());
             }
             sleep(Duration::from_millis(100)).await;
         }
-
         Ok(())
     }
 
     async fn pause(&self) -> Result<()> {
-        self.mpv_command(&["set_property", "pause", "yes"]).await?;
-        Ok(())
+        self.set_property("pause", &serde_json::json!(true)).await
     }
 
     async fn resume(&self) -> Result<()> {
-        self.mpv_command(&["set_property", "pause", "no"]).await?;
-        Ok(())
+        self.set_property("pause", &serde_json::json!(false)).await
     }
 
     async fn toggle_pause(&self) -> Result<()> {
@@ -156,9 +156,8 @@ impl MediaPlayer for MpvPlayer {
     }
 
     async fn set_volume(&self, volume: u8) -> Result<()> {
-        let vol = volume.min(100).to_string();
-        self.mpv_command(&["set_property", "volume", &vol]).await?;
-        Ok(())
+        let vol = volume.min(100);
+        self.set_property("volume", &serde_json::json!(vol)).await
     }
 
     async fn seek(&self, offset_secs: f64) -> Result<()> {
@@ -167,16 +166,59 @@ impl MediaPlayer for MpvPlayer {
         Ok(())
     }
 
+    async fn seek_to(&self, position_secs: f64) -> Result<()> {
+        let pos = position_secs.to_string();
+        self.mpv_command(&["seek", &pos, "absolute"]).await?;
+        Ok(())
+    }
+
+    async fn set_speed(&self, speed: f64) -> Result<()> {
+        let speed = speed.clamp(0.25, 4.0);
+        self.set_property("speed", &serde_json::json!(speed)).await
+    }
+
+    async fn get_speed(&self) -> Result<f64> {
+        let val = self.get_property("speed").await?;
+        Ok(val.as_f64().unwrap_or(1.0))
+    }
+
+    async fn get_paused(&self) -> Result<bool> {
+        let val = self.get_property("pause").await?;
+        Ok(val.as_bool().unwrap_or(false))
+    }
+
+    async fn get_volume(&self) -> Result<u8> {
+        let val = self.get_property("volume").await?;
+        Ok((val.as_f64().unwrap_or(80.0) as u8).min(100))
+    }
+
     async fn get_position(&self) -> Result<Duration> {
-        let value = self.get_property("time-pos").await?;
-        let secs = value.as_f64().unwrap_or(0.0);
-        Ok(Duration::from_secs_f64(secs))
+        let val = self.get_property("time-pos").await?;
+        Ok(Duration::from_secs_f64(val.as_f64().unwrap_or(0.0)))
     }
 
     async fn get_duration(&self) -> Result<Duration> {
-        let value = self.get_property("duration").await?;
-        let secs = value.as_f64().unwrap_or(0.0);
-        Ok(Duration::from_secs_f64(secs))
+        let val = self.get_property("duration").await?;
+        Ok(Duration::from_secs_f64(val.as_f64().unwrap_or(0.0)))
+    }
+
+    async fn is_finished(&self) -> Result<bool> {
+        let eof = self
+            .get_property("eof-reached")
+            .await
+            .map(|v| v.as_bool().unwrap_or(false))
+            .unwrap_or(false);
+        let idle = self
+            .get_property("idle-active")
+            .await
+            .map(|v| v.as_bool().unwrap_or(false))
+            .unwrap_or(false);
+        Ok(eof || idle)
+    }
+
+    async fn load(&self, url: &str) -> Result<()> {
+        self.mpv_command(&["loadfile", url, "replace"]).await?;
+        Ok(())
     }
 
     fn is_playing(&self) -> bool {

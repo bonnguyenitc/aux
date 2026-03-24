@@ -72,8 +72,15 @@ impl Database {
                 added_at TEXT DEFAULT (datetime('now', 'localtime'))
             );
 
+            CREATE TABLE IF NOT EXISTS search_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query TEXT NOT NULL UNIQUE,
+                searched_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_history_played ON history(played_at);
             CREATE INDEX IF NOT EXISTS idx_queue_position ON queue(position);
+            CREATE INDEX IF NOT EXISTS idx_search_history_at ON search_history(searched_at);
             ",
         )
         .context("Failed to initialize database tables")?;
@@ -81,7 +88,18 @@ impl Database {
         Ok(())
     }
 
-    pub fn connection(&self) -> std::sync::MutexGuard<Connection> {
+    /// Open an in-memory database (for tests only)
+    #[cfg(test)]
+    pub fn open_in_memory() -> Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        let db = Self {
+            conn: Mutex::new(conn),
+        };
+        db.init_tables()?;
+        Ok(db)
+    }
+
+    pub fn connection(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().unwrap()
     }
 }

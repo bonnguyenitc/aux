@@ -1,47 +1,76 @@
-use crate::library::Database;
+use chrono::{DateTime, Utc};
+use crate::player::types::RepeatMode;
 use crate::youtube::VideoInfo;
 
-/// Application state for the TUI
-pub struct App {
-    pub mode: AppMode,
-    pub search_input: String,
-    pub search_results: Vec<VideoInfo>,
-    pub selected_index: usize,
-    pub now_playing: Option<NowPlaying>,
-    pub status_message: Option<String>,
-    pub should_quit: bool,
+/// Active body panel shown in the TUI
+#[derive(Debug, Clone, PartialEq)]
+pub enum Panel {
+    Search,
+    Results,
+    Queue,
+    History,
+    Help,
 }
 
+/// Alias kept for backward compatibility with existing match arms in main.rs
+#[allow(dead_code)]
+pub type AppMode = Panel;
+
+/// Playback state mirrored from mpv + state file
+#[derive(Debug, Clone)]
 pub struct NowPlaying {
     pub video: VideoInfo,
     pub position_secs: u64,
     pub duration_secs: u64,
     pub paused: bool,
     pub volume: u8,
+    pub speed: f64,
+    pub repeat: RepeatMode,
+    pub shuffle: bool,
     pub is_fav: bool,
+    /// Whether the current video is in the play queue
+    pub in_queue: bool,
+    pub sleep_deadline: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum AppMode {
-    Search,
-    Results,
-    Playing,
-    History,
-    Favorites,
-    Queue,
-    Help,
+/// Application state for the TUI
+pub struct App {
+    pub panel: Panel,
+    pub search_input: String,
+    pub search_results: Vec<VideoInfo>,
+    pub selected_index: usize,
+    pub now_playing: Option<NowPlaying>,
+    pub status_message: Option<String>,
+    pub should_quit: bool,
+    pub queue_items: Vec<crate::library::queue::QueueEntry>,
+    pub history_items: Vec<crate::library::history::HistoryEntry>,
+    /// Saved search queries (newest first), used for ↑/↓ recall in Search panel
+    pub search_history: Vec<String>,
+    /// Current position within search_history during ↑/↓ navigation.
+    /// `None` means user is editing a fresh query (not navigating history).
+    pub search_history_index: Option<usize>,
+    /// Stash of user's in-progress input before they started navigating history
+    pub search_input_stash: String,
+    /// Backwards-compat shim: some code reads app.mode
+    pub mode: Panel,
 }
 
 impl App {
     pub fn new() -> Self {
         Self {
-            mode: AppMode::Search,
+            panel: Panel::Search,
+            mode: Panel::Search,
             search_input: String::new(),
             search_results: Vec::new(),
             selected_index: 0,
             now_playing: None,
             status_message: None,
             should_quit: false,
+            queue_items: Vec::new(),
+            history_items: Vec::new(),
+            search_history: Vec::new(),
+            search_history_index: None,
+            search_input_stash: String::new(),
         }
     }
 
@@ -49,9 +78,61 @@ impl App {
         self.status_message = Some(msg.into());
     }
 
+    pub fn set_panel(&mut self, panel: Panel) {
+        self.selected_index = 0;
+        self.mode = panel.clone();
+        self.panel = panel;
+        // Cancel any in-progress history navigation on panel switch
+        self.cancel_search_history_nav();
+    }
+
+    /// Press ↑ in the Search panel: go back in search history.
+    /// Stashes the current in-progress input the first time so ↓ can restore it.
+    pub fn search_history_up(&mut self) {
+        if self.search_history.is_empty() {
+            return;
+        }
+        let next_idx = match self.search_history_index {
+            None => {
+                // First time: stash the live input
+                self.search_input_stash = self.search_input.clone();
+                0
+            }
+            Some(i) if i + 1 < self.search_history.len() => i + 1,
+            Some(i) => i, // Already at oldest
+        };
+        self.search_history_index = Some(next_idx);
+        self.search_input = self.search_history[next_idx].clone();
+    }
+
+    /// Press ↓ in the Search panel: go forward in history, or restore live input.
+    pub fn search_history_down(&mut self) {
+        match self.search_history_index {
+            None => {} // Not navigating, nothing to do
+            Some(0) => {
+                // Back to the stashed live input
+                self.search_history_index = None;
+                self.search_input = self.search_input_stash.clone();
+            }
+            Some(i) => {
+                let next = i - 1;
+                self.search_history_index = Some(next);
+                self.search_input = self.search_history[next].clone();
+            }
+        }
+    }
+
+    /// Reset history navigation (called when user types or presses Enter)
+    pub fn cancel_search_history_nav(&mut self) {
+        self.search_history_index = None;
+        self.search_input_stash.clear();
+    }
+
     pub fn select_next(&mut self) {
-        let max = match self.mode {
-            AppMode::Results => self.search_results.len(),
+        let max = match self.panel {
+            Panel::Results => self.search_results.len(),
+            Panel::Queue => self.queue_items.len(),
+            Panel::History => self.history_items.len(),
             _ => 0,
         };
         if max > 0 && self.selected_index < max - 1 {
@@ -65,12 +146,34 @@ impl App {
         }
     }
 
-    pub fn update_playback(&mut self, position: u64, duration: u64, paused: bool, volume: u8) {
+    pub fn update_playback(
+        &mut self,
+        position: u64,
+        duration: u64,
+        paused: bool,
+        volume: u8,
+    ) {
         if let Some(ref mut np) = self.now_playing {
             np.position_secs = position;
             np.duration_secs = duration;
             np.paused = paused;
             np.volume = volume;
+        }
+    }
+
+    /// Update speed/repeat/shuffle/sleep from state file (called on tick)
+    pub fn update_player_meta(
+        &mut self,
+        speed: f64,
+        repeat: RepeatMode,
+        shuffle: bool,
+        sleep_deadline: Option<DateTime<Utc>>,
+    ) {
+        if let Some(ref mut np) = self.now_playing {
+            np.speed = speed;
+            np.repeat = repeat;
+            np.shuffle = shuffle;
+            np.sleep_deadline = sleep_deadline;
         }
     }
 }

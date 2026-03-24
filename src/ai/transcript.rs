@@ -18,6 +18,7 @@ pub struct TranscriptSegment {
 
 impl Transcript {
     /// Get full transcript as plain text
+    #[allow(dead_code)]
     pub fn full_text(&self) -> String {
         self.segments
             .iter()
@@ -223,6 +224,7 @@ pub async fn fetch_transcript(video_url: &str) -> Result<Option<Transcript>> {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct SubtitleInfo {
     // For future use with subtitle metadata
 }

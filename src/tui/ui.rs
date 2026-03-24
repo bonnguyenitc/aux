@@ -1,113 +1,181 @@
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
-    text::{Line, Span, Text},
+    text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Gauge, List, ListItem, Paragraph, Wrap,
+        Block, BorderType, Borders, Gauge, List, ListItem, Paragraph, Tabs,
     },
     Frame,
 };
 
 use crate::youtube::types::format_duration;
-use super::app::{App, AppMode};
+use super::app::{App, NowPlaying, Panel};
 
-const BRAND_COLOR: Color = Color::Rgb(255, 107, 107);
-const ACCENT_COLOR: Color = Color::Rgb(78, 205, 196);
-const DIM_COLOR: Color = Color::Rgb(100, 100, 120);
-const BG_COLOR: Color = Color::Rgb(20, 20, 30);
+// ── Color Palette (Spotify-inspired dark) ──────────────────────────────────
+const BRAND:    Color = Color::Rgb(29, 185, 84);   // Spotify green
+const ACCENT:   Color = Color::Rgb(78, 205, 196);  // Teal highlight
+const WARN:     Color = Color::Rgb(255, 200, 60);  // Amber for repeat/sleep
+const DIM:      Color = Color::Rgb(100, 100, 120);
+const TEXT:     Color = Color::White;
+const SELECTED: Color = Color::Rgb(29, 185, 84);
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
-    // Main layout: header + body + footer
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Header
-            Constraint::Min(5),    // Body
-            Constraint::Length(3), // Now Playing bar
-            Constraint::Length(1), // Status bar
+            Constraint::Length(3), // Header + tabs
+            Constraint::Min(5),    // Body panel
+            Constraint::Length(4), // Now playing bar
+            Constraint::Length(1), // Keybind bar
         ])
         .split(area);
 
-    draw_header(frame, chunks[0]);
+    draw_header(frame, chunks[0], app);
     draw_body(frame, chunks[1], app);
-    draw_now_playing(frame, chunks[2], app);
-    draw_status_bar(frame, chunks[3], app);
+    draw_now_playing_bar(frame, chunks[2], app);
+    draw_keybind_bar(frame, chunks[3], app);
 }
 
-fn draw_header(frame: &mut Frame, area: Rect) {
-    let header = Paragraph::new(Line::from(vec![
+// ── Header / Tabs ──────────────────────────────────────────────────────────
+
+fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
+    let layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(14), Constraint::Min(10)])
+        .split(area);
+
+    // Brand
+    let brand = Paragraph::new(Line::from(vec![
         Span::styled("  🎵 ", Style::default()),
-        Span::styled("duet", Style::default().fg(BRAND_COLOR).bold()),
-        Span::styled(
-            "  — CLI YouTube Player with AI Companion",
-            Style::default().fg(DIM_COLOR),
-        ),
+        Span::styled("duet", Style::default().fg(BRAND).bold()),
     ]))
     .block(
         Block::default()
-            .borders(Borders::BOTTOM)
+            .borders(Borders::BOTTOM | Borders::RIGHT)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(DIM_COLOR)),
+            .border_style(Style::default().fg(DIM)),
     );
+    frame.render_widget(brand, layout[0]);
 
-    frame.render_widget(header, area);
+    // Tabs
+    let tab_titles = vec!["Search", "Results", "Queue", "History", "Help"];
+    let selected = match app.panel {
+        Panel::Search => 0,
+        Panel::Results => 1,
+        Panel::Queue => 2,
+        Panel::History => 3,
+        Panel::Help => 4,
+    };
+
+    let tabs = Tabs::new(tab_titles)
+        .select(selected)
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(DIM)),
+        )
+        .style(Style::default().fg(DIM))
+        .highlight_style(Style::default().fg(BRAND).bold().add_modifier(Modifier::UNDERLINED));
+
+    frame.render_widget(tabs, layout[1]);
 }
+
+// ── Body dispatch ──────────────────────────────────────────────────────────
 
 fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
-    match app.mode {
-        AppMode::Search => draw_search(frame, area, app),
-        AppMode::Results => draw_results(frame, area, app),
-        AppMode::Playing => draw_playing(frame, area, app),
-        AppMode::Help => draw_help(frame, area),
-        _ => draw_search(frame, area, app),
+    match app.panel {
+        Panel::Search => draw_search(frame, area, app),
+        Panel::Results => draw_results(frame, area, app),
+        Panel::Queue => draw_queue(frame, area, app),
+        Panel::History => draw_history(frame, area, app),
+        Panel::Help => draw_help(frame, area),
     }
 }
+
+// ── Search panel ───────────────────────────────────────────────────────────
 
 fn draw_search(frame: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .margin(2)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(3),
-        ])
+        .margin(1)
+        .constraints([Constraint::Length(3), Constraint::Min(3)])
         .split(area);
 
-    // Search input
+    // Show history position in title when navigating
+    let title = if let Some(idx) = app.search_history_index {
+        format!(
+            " Search YouTube  ·  history {}/{} (↑↓ to navigate) ",
+            idx + 1,
+            app.search_history.len()
+        )
+    } else if !app.search_history.is_empty() {
+        format!(
+            " Search YouTube  ·  {} saved {} ",
+            app.search_history.len(),
+            if app.search_history.len() == 1 { "query" } else { "queries" }
+        )
+    } else {
+        " Search YouTube ".to_string()
+    };
+
+    let border_color = if app.search_history_index.is_some() { WARN } else { ACCENT };
+
     let input = Paragraph::new(Line::from(vec![
         Span::styled("🔍 ", Style::default()),
-        Span::styled(&app.search_input, Style::default().fg(Color::White)),
-        Span::styled("▌", Style::default().fg(ACCENT_COLOR)),
+        Span::styled(&app.search_input, Style::default().fg(TEXT).bold()),
+        Span::styled("▌", Style::default().fg(ACCENT)),
     ]))
     .block(
         Block::default()
-            .title(" Search YouTube ")
-            .title_style(Style::default().fg(ACCENT_COLOR).bold())
+            .title(title)
+            .title_style(Style::default().fg(border_color).bold())
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(ACCENT_COLOR)),
+            .border_style(Style::default().fg(border_color)),
     );
-
     frame.render_widget(input, chunks[0]);
 
-    // Help text
-    let help = Paragraph::new(vec![
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("  Type to search, ", Style::default().fg(DIM_COLOR)),
-            Span::styled("Enter", Style::default().fg(ACCENT_COLOR)),
-            Span::styled(" to search, ", Style::default().fg(DIM_COLOR)),
-            Span::styled("?", Style::default().fg(ACCENT_COLOR)),
-            Span::styled(" for help, ", Style::default().fg(DIM_COLOR)),
-            Span::styled("Esc", Style::default().fg(ACCENT_COLOR)),
-            Span::styled(" to quit", Style::default().fg(DIM_COLOR)),
-        ]),
-    ]);
+    // Second line shows search history or generic hint
+    let hint_spans: Vec<Span> = if !app.search_history.is_empty() && app.search_history_index.is_none() {
+        let preview = app.search_history.first().map(|s| {
+            if s.len() > 30 { format!("{}…", &s[..30]) } else { s.clone() }
+        }).unwrap_or_default();
+        vec![
+            Span::styled("  Last: ", Style::default().fg(DIM)),
+            Span::styled(preview, Style::default().fg(WARN)),
+            Span::styled("  ↑/↓ recall history  ", Style::default().fg(DIM)),
+            Span::styled("Enter", Style::default().fg(ACCENT)),
+            Span::styled(" search  ", Style::default().fg(DIM)),
+            Span::styled("Tab", Style::default().fg(ACCENT)),
+            Span::styled(" panels  ", Style::default().fg(DIM)),
+            Span::styled("?", Style::default().fg(ACCENT)),
+            Span::styled(" help", Style::default().fg(DIM)),
+        ]
+    } else {
+        vec![
+            Span::styled("  Type to search  ", Style::default().fg(DIM)),
+            Span::styled("Enter", Style::default().fg(ACCENT)),
+            Span::styled(" to search  ", Style::default().fg(DIM)),
+            Span::styled("Tab", Style::default().fg(ACCENT)),
+            Span::styled(" switch panels  ", Style::default().fg(DIM)),
+            Span::styled("?", Style::default().fg(ACCENT)),
+            Span::styled(" help  ", Style::default().fg(DIM)),
+            Span::styled("q", Style::default().fg(ACCENT)),
+            Span::styled(" quit", Style::default().fg(DIM)),
+        ]
+    };
 
-    frame.render_widget(help, chunks[1]);
+    let hint = Paragraph::new(vec![
+        Line::from(""),
+        Line::from(hint_spans),
+    ]);
+    frame.render_widget(hint, chunks[1]);
 }
+
+// ── Results panel ─────────────────────────────────────────────────────────
 
 fn draw_results(frame: &mut Frame, area: Rect, app: &App) {
     let items: Vec<ListItem> = app
@@ -121,229 +189,348 @@ fn draw_results(frame: &mut Frame, area: Rect, app: &App) {
                 .unwrap_or_else(|| "LIVE".to_string());
             let channel = v.channel.as_deref().unwrap_or("Unknown");
 
-            let style = if i == app.selected_index {
-                Style::default().fg(ACCENT_COLOR).bold()
+            let selected = i == app.selected_index;
+            let style = if selected {
+                Style::default().fg(SELECTED).bold()
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(TEXT)
             };
+            let prefix = if selected { "▸ " } else { "  " };
 
-            let prefix = if i == app.selected_index { "▸ " } else { "  " };
+            ListItem::new(vec![
+                Line::from(vec![
+                    Span::styled(prefix, style),
+                    Span::styled(&v.title, style),
+                ]),
+                Line::from(vec![
+                    Span::styled("    ", Style::default()),
+                    Span::styled(
+                        format!("{}  ·  {}", channel, duration),
+                        Style::default().fg(DIM),
+                    ),
+                ]),
+            ])
+        })
+        .collect();
 
+    let title = format!(" Search Results ({}) ", app.search_results.len());
+    let list = List::new(items).block(
+        Block::default()
+            .title(title)
+            .title_style(Style::default().fg(ACCENT).bold())
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(DIM)),
+    );
+    frame.render_widget(list, area);
+}
+
+// ── Queue panel ───────────────────────────────────────────────────────────
+
+fn draw_queue(frame: &mut Frame, area: Rect, app: &App) {
+    if app.queue_items.is_empty() {
+        let empty = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "  Queue is empty. Press [a] while browsing results to add tracks.",
+                Style::default().fg(DIM),
+            )]),
+        ])
+        .block(
+            Block::default()
+                .title(" Queue ")
+                .title_style(Style::default().fg(ACCENT).bold())
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(DIM)),
+        );
+        frame.render_widget(empty, area);
+        return;
+    }
+
+    let items: Vec<ListItem> = app
+        .queue_items
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let selected = i == app.selected_index;
+            let style = if selected {
+                Style::default().fg(SELECTED).bold()
+            } else {
+                Style::default().fg(TEXT)
+            };
+            let prefix = if selected { "▸ " } else { "  " };
+            let dur = e
+                .duration_secs
+                .map(|d| format_duration(d as u64))
+                .unwrap_or_else(|| "??:??".to_string());
             ListItem::new(Line::from(vec![
                 Span::styled(prefix, style),
-                Span::styled(&v.title, style),
-                Span::styled(
-                    format!("  {} · {}", channel, duration),
-                    Style::default().fg(DIM_COLOR),
-                ),
+                Span::styled(&e.title, style),
+                Span::styled(format!("  [{}]", dur), Style::default().fg(DIM)),
             ]))
         })
         .collect();
 
+    let title = format!(" Queue ({}) ", app.queue_items.len());
     let list = List::new(items).block(
         Block::default()
-            .title(format!(" Search Results ({}) ", app.search_results.len()))
-            .title_style(Style::default().fg(ACCENT_COLOR).bold())
+            .title(title)
+            .title_style(Style::default().fg(ACCENT).bold())
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(DIM_COLOR)),
+            .border_style(Style::default().fg(DIM)),
     );
-
     frame.render_widget(list, area);
 }
 
-fn draw_playing(frame: &mut Frame, area: Rect, app: &App) {
-    if let Some(ref np) = app.now_playing {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(2)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Length(2),
-                Constraint::Min(3),
-            ])
-            .split(area);
+// ── History panel ──────────────────────────────────────────────────────────
 
-        // Title
-        let fav_icon = if np.is_fav { " ❤️" } else { "" };
-        let status_icon = if np.paused { "⏸" } else { "▶" };
-        let title = Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!(" {} ", status_icon),
-                Style::default().fg(ACCENT_COLOR),
-            ),
-            Span::styled(
-                &np.video.title,
-                Style::default().fg(Color::White).bold(),
-            ),
-            Span::styled(fav_icon, Style::default()),
-        ]));
-
-        frame.render_widget(title, chunks[0]);
-
-        // Channel + volume
-        let channel = np.video.channel.as_deref().unwrap_or("Unknown");
-        let info = Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!("  🎵 {} ", channel),
-                Style::default().fg(DIM_COLOR),
-            ),
-            Span::styled(
-                format!("  🔊 {}%", np.volume),
-                Style::default().fg(DIM_COLOR),
-            ),
-        ]));
-
-        frame.render_widget(info, chunks[1]);
-
-        // Keybinds
-        let keys = Paragraph::new(vec![
+fn draw_history(frame: &mut Frame, area: Rect, app: &App) {
+    if app.history_items.is_empty() {
+        let empty = Paragraph::new(vec![
             Line::from(""),
-            Line::from(vec![
-                Span::styled("  space", Style::default().fg(ACCENT_COLOR)),
-                Span::styled(" pause  ", Style::default().fg(DIM_COLOR)),
-                Span::styled("←/→", Style::default().fg(ACCENT_COLOR)),
-                Span::styled(" seek  ", Style::default().fg(DIM_COLOR)),
-                Span::styled("↑/↓", Style::default().fg(ACCENT_COLOR)),
-                Span::styled(" vol  ", Style::default().fg(DIM_COLOR)),
-                Span::styled("f", Style::default().fg(ACCENT_COLOR)),
-                Span::styled(" fav  ", Style::default().fg(DIM_COLOR)),
-                Span::styled("s", Style::default().fg(ACCENT_COLOR)),
-                Span::styled(" search  ", Style::default().fg(DIM_COLOR)),
-                Span::styled("q", Style::default().fg(ACCENT_COLOR)),
-                Span::styled(" quit", Style::default().fg(DIM_COLOR)),
-            ]),
-        ]);
-
-        frame.render_widget(keys, chunks[2]);
-    }
-}
-
-fn draw_now_playing(frame: &mut Frame, area: Rect, app: &App) {
-    if let Some(ref np) = app.now_playing {
-        let progress = if np.duration_secs > 0 {
-            (np.position_secs as f64 / np.duration_secs as f64).min(1.0)
-        } else {
-            0.0
-        };
-
-        let pos_str = format_duration(np.position_secs);
-        let dur_str = format_duration(np.duration_secs);
-        let status = if np.paused { "⏸" } else { "▶" };
-
-        let gauge = Gauge::default()
-            .block(
-                Block::default()
-                    .borders(Borders::TOP)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(DIM_COLOR)),
-            )
-            .gauge_style(Style::default().fg(BRAND_COLOR))
-            .ratio(progress)
-            .label(format!(
-                " {} {} — {} / {} ",
-                status,
-                np.video.title.chars().take(40).collect::<String>(),
-                pos_str,
-                dur_str
-            ));
-
-        frame.render_widget(gauge, area);
-    } else {
-        let empty = Paragraph::new(Line::from(vec![Span::styled(
-            "  No track playing",
-            Style::default().fg(DIM_COLOR),
-        )]))
+            Line::from(vec![Span::styled(
+                "  No listening history yet.",
+                Style::default().fg(DIM),
+            )]),
+        ])
         .block(
             Block::default()
-                .borders(Borders::TOP)
+                .title(" History ")
+                .title_style(Style::default().fg(ACCENT).bold())
+                .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(DIM_COLOR)),
+                .border_style(Style::default().fg(DIM)),
         );
-
         frame.render_widget(empty, area);
+        return;
+    }
+
+    let items: Vec<ListItem> = app
+        .history_items
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let selected = i == app.selected_index;
+            let style = if selected {
+                Style::default().fg(SELECTED).bold()
+            } else {
+                Style::default().fg(TEXT)
+            };
+            let prefix = if selected { "▸ " } else { "  " };
+            let ch = e.channel.as_deref().unwrap_or("Unknown");
+            let when = e.played_at.split('T').next().unwrap_or(&e.played_at);
+            ListItem::new(vec![
+                Line::from(vec![
+                    Span::styled(prefix, style),
+                    Span::styled(&e.title, style),
+                ]),
+                Line::from(vec![
+                    Span::styled("    ", Style::default()),
+                    Span::styled(
+                        format!("{}  ·  {}", ch, when),
+                        Style::default().fg(DIM),
+                    ),
+                ]),
+            ])
+        })
+        .collect();
+
+    let title = format!(" History ({}) ", app.history_items.len());
+    let list = List::new(items).block(
+        Block::default()
+            .title(title)
+            .title_style(Style::default().fg(ACCENT).bold())
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(DIM)),
+    );
+    frame.render_widget(list, area);
+}
+
+// ── Help panel ─────────────────────────────────────────────────────────────
+
+fn draw_help(frame: &mut Frame, area: Rect) {
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "  Keybindings",
+            Style::default().fg(BRAND).bold(),
+        )]),
+        Line::from(""),
+        help_row("/", "New search"),
+        help_row("Enter", "Play selected / confirm"),
+        help_row("Tab", "Cycle panels (Search → Results → Queue → History → Help)"),
+        help_row("↑ ↓ / j k", "Navigate list"),
+        help_row("Esc / q", "Back / Quit"),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "  Playback (any panel while playing)",
+            Style::default().fg(ACCENT).bold(),
+        )]),
+        Line::from(""),
+        help_row("Space", "Pause / Resume"),
+        help_row("← / →", "Seek ±10s  (Search/Help panel)"),
+        help_row("Shift + ← / →", "Seek ±60s  (any panel)"),
+        help_row("↑ / ↓", "Volume ±5%  (Search/Help panel)"),
+        help_row("+ / -  or  =", "Volume ±5%  (any panel)"),
+        help_row("] / [", "Speed up / down"),
+        help_row("n", "Skip to next track"),
+        help_row("p", "Restart / prev track"),
+        help_row("r", "Cycle repeat  (off → one → all)"),
+        help_row("z", "Toggle shuffle"),
+        help_row("t", "Toggle 30-min sleep timer  (shows in bar)"),
+        help_row("f", "Toggle favorite"),
+        help_row("a", "Add current track to queue"),
+        help_row("d", "Remove selected item from queue  (Queue panel only)"),
+        help_row("S", "Stop playback"),
+        help_row("c", "Chat hint  (use duet chat in terminal)"),
+        Line::from(""),
+        help_row("?", "This help screen"),
+    ];
+
+    let help = Paragraph::new(lines).block(
+        Block::default()
+            .title(" Help ")
+            .title_style(Style::default().fg(BRAND).bold())
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(DIM)),
+    );
+    frame.render_widget(help, area);
+}
+
+fn help_row<'a>(key: &'a str, desc: &'a str) -> Line<'a> {
+    Line::from(vec![
+        Span::styled(format!("  {:<18}", key), Style::default().fg(ACCENT)),
+        Span::styled(desc, Style::default().fg(TEXT)),
+    ])
+}
+
+// ── Now Playing bar ────────────────────────────────────────────────────────
+
+pub fn draw_now_playing_bar(frame: &mut Frame, area: Rect, app: &App) {
+    if let Some(ref np) = app.now_playing {
+        draw_now_playing_active(frame, area, np);
+    } else {
+        draw_now_playing_empty(frame, area);
     }
 }
 
-fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
-    let msg = app
-        .status_message
-        .as_deref()
-        .unwrap_or("duet v0.1.0 — Type to search, ? for help");
+fn draw_now_playing_active(frame: &mut Frame, area: Rect, np: &NowPlaying) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(3)])
+        .split(area);
 
-    let status = Paragraph::new(Line::from(vec![
-        Span::styled(" ", Style::default()),
-        Span::styled(msg, Style::default().fg(DIM_COLOR)),
-    ]));
+    // Progress bar
+    let progress = if np.duration_secs > 0 {
+        (np.position_secs as f64 / np.duration_secs as f64).min(1.0)
+    } else {
+        0.0
+    };
+    let pos_str = format_duration(np.position_secs);
+    let dur_str = format_duration(np.duration_secs);
 
-    frame.render_widget(status, area);
+    let gauge = Gauge::default()
+        .gauge_style(Style::default().fg(BRAND).bg(Color::Rgb(30, 30, 30)))
+        .ratio(progress)
+        .label(format!("{} / {}", pos_str, dur_str));
+    frame.render_widget(gauge, chunks[0]);
+
+    // Info line
+    let status = if np.paused { "⏸" } else { "▶" };
+    let fav   = if np.is_fav  { " ❤" } else { "" };
+    let queue = if np.in_queue { " 📋" } else { "" };
+    let channel = np.video.channel.as_deref().unwrap_or("Unknown");
+    let repeat_label = np.repeat.label();
+    let shuffle_label = if np.shuffle { " 🔀" } else { "" };
+
+    // Truncate title to fit
+    let title_max = area.width.saturating_sub(40) as usize;
+    let title: String = np
+        .video
+        .title
+        .chars()
+        .take(title_max.max(20))
+        .collect();
+
+    // Sleep timer indicator
+    let sleep_span = np.sleep_deadline.map(|d| {
+        Span::styled(
+            format!("  😴{}", d.format("%H:%M")),
+            Style::default().fg(WARN),
+        )
+    });
+
+    let mut info_spans = vec![
+        Span::styled(format!(" {} ", status), Style::default().fg(BRAND).bold()),
+        Span::styled(title, Style::default().fg(TEXT).bold()),
+        Span::styled(fav,   Style::default().fg(Color::Red)),
+        Span::styled(queue, Style::default().fg(ACCENT)),
+        Span::styled(format!("  ·  {}", channel), Style::default().fg(DIM)),
+        Span::styled(format!("  🔊{}%", np.volume), Style::default().fg(DIM)),
+        Span::styled(
+            format!("  {}x", np.speed),
+            Style::default().fg(if (np.speed - 1.0).abs() > 0.01 { WARN } else { DIM }),
+        ),
+        Span::styled(
+            format!("  {}{}", repeat_label, shuffle_label),
+            Style::default().fg(DIM),
+        ),
+    ];
+    if let Some(s) = sleep_span { info_spans.push(s); }
+
+    let info = Paragraph::new(Line::from(info_spans))
+    .block(
+        Block::default()
+            .borders(Borders::TOP | Borders::BOTTOM)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(DIM)),
+    );
+    frame.render_widget(info, chunks[1]);
 }
 
-fn draw_help(frame: &mut Frame, area: Rect) {
-    let help_text = vec![
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("  Keybindings", Style::default().fg(BRAND_COLOR).bold()),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("  /         ", Style::default().fg(ACCENT_COLOR)),
-            Span::styled("Search", Style::default().fg(Color::White)),
-        ]),
-        Line::from(vec![
-            Span::styled("  Enter     ", Style::default().fg(ACCENT_COLOR)),
-            Span::styled("Select / Confirm", Style::default().fg(Color::White)),
-        ]),
-        Line::from(vec![
-            Span::styled("  Space     ", Style::default().fg(ACCENT_COLOR)),
-            Span::styled("Pause / Resume", Style::default().fg(Color::White)),
-        ]),
-        Line::from(vec![
-            Span::styled("  ← / →     ", Style::default().fg(ACCENT_COLOR)),
-            Span::styled("Seek ±10 seconds", Style::default().fg(Color::White)),
-        ]),
-        Line::from(vec![
-            Span::styled("  ↑ / ↓     ", Style::default().fg(ACCENT_COLOR)),
-            Span::styled("Volume ±5", Style::default().fg(Color::White)),
-        ]),
-        Line::from(vec![
-            Span::styled("  f         ", Style::default().fg(ACCENT_COLOR)),
-            Span::styled("Toggle favorite", Style::default().fg(Color::White)),
-        ]),
-        Line::from(vec![
-            Span::styled("  a         ", Style::default().fg(ACCENT_COLOR)),
-            Span::styled("Add to queue", Style::default().fg(Color::White)),
-        ]),
-        Line::from(vec![
-            Span::styled("  c         ", Style::default().fg(ACCENT_COLOR)),
-            Span::styled("Chat with AI", Style::default().fg(Color::White)),
-        ]),
-        Line::from(vec![
-            Span::styled("  h         ", Style::default().fg(ACCENT_COLOR)),
-            Span::styled("History", Style::default().fg(Color::White)),
-        ]),
-        Line::from(vec![
-            Span::styled("  ?         ", Style::default().fg(ACCENT_COLOR)),
-            Span::styled("Help (this screen)", Style::default().fg(Color::White)),
-        ]),
-        Line::from(vec![
-            Span::styled("  Esc / q   ", Style::default().fg(ACCENT_COLOR)),
-            Span::styled("Back / Quit", Style::default().fg(Color::White)),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("  Press any key to go back", Style::default().fg(DIM_COLOR)),
-        ]),
-    ];
-
-    let help = Paragraph::new(help_text).block(
+fn draw_now_playing_empty(frame: &mut Frame, area: Rect) {
+    let empty = Paragraph::new(Line::from(vec![Span::styled(
+        "  No track playing — use duet search or duet play <url>",
+        Style::default().fg(DIM),
+    )]))
+    .block(
         Block::default()
-            .title(" Help ")
-            .title_style(Style::default().fg(BRAND_COLOR).bold())
-            .borders(Borders::ALL)
+            .borders(Borders::TOP | Borders::BOTTOM)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(DIM_COLOR)),
+            .border_style(Style::default().fg(DIM)),
     );
+    frame.render_widget(empty, area);
+}
 
-    frame.render_widget(help, area);
+// ── Keybind bar ────────────────────────────────────────────────────────────
+
+fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
+    let playing_hint = if app.now_playing.is_some() {
+        "  | Space:pause  ←→:seek  +/-:vol  ]/[:speed  r:repeat  z:shuffle  n:next  t:sleep  S:stop"
+    } else {
+        ""
+    };
+
+    let panel_hint = match app.panel {
+        Panel::Search  => " Enter:search  Tab:panels  ?:help  q:quit",
+        Panel::Results => " Enter:play  ↑↓jk:nav  a:queue  f:fav  Tab:panel  Esc:back",
+        Panel::Queue   => " Enter:play  ↑↓jk:nav  d:remove  Tab:panel",
+        Panel::History => " Enter:replay  ↑↓jk:nav  Tab:panel",
+        Panel::Help    => " Any key to go back",
+    };
+
+    let msg = format!("{}{}", panel_hint, playing_hint);
+
+    let status_msg = app
+        .status_message
+        .as_deref()
+        .map(|s| format!(" ✦ {}  |{}", s, msg))
+        .unwrap_or_else(|| msg.to_string());
+
+    let bar = Paragraph::new(Span::styled(status_msg, Style::default().fg(DIM)));
+    frame.render_widget(bar, area);
 }

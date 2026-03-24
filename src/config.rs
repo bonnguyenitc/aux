@@ -144,7 +144,9 @@ impl AiConfig {
     }
 }
 
-/// Resolve with CLI flag overrides
+/// Resolve with CLI flag overrides (--model, --profile).
+/// Reserved for future per-command AI config overrides.
+#[allow(dead_code)]
 pub fn resolve_with_overrides(
     ai: &AiConfig,
     profile: Option<&str>,

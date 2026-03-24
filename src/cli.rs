@@ -29,10 +29,23 @@ pub enum Commands {
     Play {
         /// YouTube URL or video ID
         url: String,
+        /// Run in background (daemon mode)
+        #[arg(long, short = 'd')]
+        daemon: bool,
+        /// Initial playback speed (0.25-4.0)
+        #[arg(long)]
+        speed: Option<f64>,
+        /// Initial repeat mode
+        #[arg(long)]
+        repeat: Option<RepeatArg>,
     },
 
     /// Show what's currently playing
-    Now,
+    Now {
+        /// Output format
+        #[arg(long, default_value = "pretty")]
+        format: OutputFormat,
+    },
 
     /// Pause playback
     Pause,
@@ -40,13 +53,63 @@ pub enum Commands {
     /// Resume playback
     Resume,
 
-    /// Stop playback
+    /// Stop playback and quit daemon
     Stop,
 
-    /// Set volume (0-100)
+    /// Set or show volume (0-100)
     Volume {
-        /// Volume level (0-100)
-        level: u8,
+        /// Volume level 0-100 (omit to show current)
+        level: Option<u8>,
+    },
+
+    /// Seek playback position (+10, -30, 2:30, 1:02:30)
+    Seek {
+        /// Offset (+10, -30) or absolute position (2:30, 1:02:30)
+        position: String,
+    },
+
+    /// Skip to next track in queue
+    Next,
+
+    /// Go to previous track
+    Prev,
+
+    /// Set or cycle playback speed (0.25-4.0, 'up', 'down')
+    Speed {
+        /// Speed value or 'up'/'down' (omit to show current)
+        value: Option<String>,
+    },
+
+    /// Set or cycle repeat mode
+    Repeat {
+        /// Repeat mode: off | one | all (omit to cycle)
+        mode: Option<RepeatArg>,
+    },
+
+    /// Toggle shuffle
+    Shuffle,
+
+    /// Set sleep timer (30m, 1h, 1h30m, off)
+    Sleep {
+        /// Duration or 'off' to cancel
+        duration: String,
+    },
+
+    /// Show listening stats
+    Stats {
+        /// Time range: today | week | month | all
+        #[arg(default_value = "all")]
+        range: String,
+    },
+
+    /// Show daemon logs
+    Logs {
+        /// Number of lines to show
+        #[arg(short = 'n', long, default_value = "50")]
+        lines: usize,
+        /// Follow log output
+        #[arg(long)]
+        follow: bool,
     },
 
     /// Chat with AI about the current video
@@ -256,4 +319,17 @@ pub enum YoutubeAction {
         #[arg(long)]
         backend: Option<String>,
     },
+}
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum RepeatArg {
+    Off,
+    One,
+    All,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum OutputFormat {
+    Pretty,
+    Json,
+    Oneline,
 }
