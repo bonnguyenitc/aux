@@ -260,10 +260,16 @@ async fn cmd_play(url: &str, config: &Config, db: &Database) -> Result<()> {
 
     println!("\n  {} {}\n", "🔍 Fetching:".bold(), url);
 
-    let results = yt.search(url, 1).await?;
-    if let Some(video) = results.first() {
-        play_video(video, config, db).await?;
-    }
+    let video = if youtube::is_youtube_url(url) {
+        // Direct URL or video ID — fetch metadata without going through ytsearch:
+        yt.fetch_info(url).await?
+    } else {
+        // Keyword query — use search
+        let results = yt.search(url, 1).await?;
+        results.into_iter().next().ok_or_else(|| anyhow::anyhow!("No results for: {}", url))?
+    };
+
+    play_video(&video, config, db).await?;
 
     Ok(())
 }

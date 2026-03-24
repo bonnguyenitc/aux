@@ -7,6 +7,21 @@ use super::YouTubeBackend;
 
 pub struct YtDlp;
 
+/// Returns true if `input` looks like a YouTube URL or bare video ID,
+/// rather than a keyword search query.
+pub fn is_youtube_url(input: &str) -> bool {
+    let trimmed = input.trim();
+    // Full URLs
+    if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+        return true;
+    }
+    // Bare video IDs: 11 alphanumeric / dash / underscore chars
+    if trimmed.len() == 11 && trimmed.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+        return true;
+    }
+    false
+}
+
 impl YtDlp {
     pub fn new() -> Self {
         Self
@@ -25,6 +40,43 @@ impl YtDlp {
         }
 
         Ok(())
+    }
+}
+
+impl YtDlp {
+    /// Fetch video info directly from a URL or video ID (no `ytsearch:` prefix).
+    pub async fn fetch_info(&self, url: &str) -> Result<VideoInfo> {
+        // Normalise bare video IDs to a full URL
+        let resolved = if !url.contains('.')
+            && url.len() == 11
+            && url.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        {
+            format!("https://www.youtube.com/watch?v={}", url)
+        } else {
+            url.to_string()
+        };
+
+        let output = Command::new("yt-dlp")
+            .args(["--dump-json", "--no-warnings", "--flat-playlist", &resolved])
+            .output()
+            .await
+            .context("Failed to execute yt-dlp")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!(DuetError::YtDlpError(stderr.to_string()));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Take only the first JSON line (handles playlists gracefully)
+        let first_line = stdout.lines().find(|l| !l.trim().is_empty()).ok_or_else(|| {
+            anyhow::anyhow!("yt-dlp returned no output for URL: {}", url)
+        })?;
+
+        let info: VideoInfo = serde_json::from_str(first_line)
+            .context("Failed to parse yt-dlp JSON output")?;
+
+        Ok(info)
     }
 }
 

@@ -3,6 +3,7 @@ pub mod ytdlp;
 
 use anyhow::Result;
 pub use types::{VideoInfo, StreamUrl};
+pub use ytdlp::is_youtube_url;
 pub use ytdlp::YtDlp;
 
 pub trait YouTubeBackend {
