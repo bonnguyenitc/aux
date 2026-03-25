@@ -1,322 +1,168 @@
 # aux 🎵
 
-Listen music with AI agent — a universal audio player written in Rust.
+> **Listen to music with your AI agent — in the terminal.**
 
-Search and play audio from YouTube, SoundCloud, YT Music, and 1000+ sites supported by yt-dlp. Features a full TUI mode with 9 panels, AI chat companion, auto-synced lyrics, playlists, equalizer, sleep timer, and queue management.
+Stop alt-tabbing to Spotify. Stop feeding Chrome 2GB of RAM for a YouTube tab. Stop losing your flow to ads and recommendations rabbit holes.
 
-## Requirements
+aux is an open-source terminal music player that pairs you with an AI companion. Search YouTube, SoundCloud, YT Music & [1000+ sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) — no browser, no ads, no distractions. Get synced lyrics, chat about what you're hearing, and let AI suggest your next track. Built in Rust. Zero subscriptions.
 
-- [Rust](https://rustup.rs/): `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp): `brew install yt-dlp`
-- [mpv](https://mpv.io/): `brew install mpv`
+![aux demo](demo/demo-aux.gif)
 
-## Install
+## ⚡ Install
 
 ```bash
-cargo install --path .
+brew install yt-dlp mpv        # dependencies
+cargo install --path .         # install aux
 ```
 
-## Usage
+## 🔥 Why developers love aux
 
-### TUI Mode (default)
+- 🤖 **AI listens with you** — ask "what's this song about?", get podcast summaries, receive smart recommendations
+- 🎧 **1000+ sources** — YouTube, SoundCloud, YT Music, Bandcamp, and more — no browser, no ads
+- 📝 **Auto-synced lyrics** — karaoke mode in your terminal
+- 🎛️ **Full player** — queue, playlists, EQ, shuffle, repeat, sleep timer
+- ⌨️ **Keyboard-only** — never leave your workflow
+
+## 🎬 Quick start
 
 ```bash
-aux         # Launch full-screen TUI with 9 tabs
+aux                                  # launch TUI (9 panels, full control)
+aux search "lofi coding music"       # search & play from CLI
+aux play <url>                       # play any URL
 ```
 
-**Panels:** Search → Results → Lyrics → Queue → Favorites → History → Playlists → Chat → Help
+**TUI panels:** Search → Results → Lyrics → Queue → Favorites → History → Playlists → Chat → Help
 
-Press `Tab` to cycle between panels, `?` for built-in help.
+Press `Tab` to switch panels, `?` for help.
 
-### CLI Mode
+## 🤖 Your AI music companion
+
+aux isn't just a player — it's a **listening partner**. Transcripts are fetched automatically so AI understands what you're hearing.
 
 ```bash
-# Search & play
-aux search "lofi coding music"                # YouTube (default)
-aux search "ambient" --source soundcloud       # SoundCloud
-aux search "focus beats" --source ytmusic       # YT Music
-aux play <url>                                  # Any supported URL
-aux play <url> --daemon        # Background playback
-aux play <url> --speed 1.5     # Start at 1.5x speed
-
-# Playback controls
-aux pause
-aux resume
-aux stop
-aux now                        # Show what's playing
-aux volume 80
-aux seek +30                   # Seek forward 30s
-aux seek -10                   # Seek back 10s
-aux seek 2:30                  # Seek to 2:30
-aux next                       # Skip to next in queue
-aux prev                       # Go to previous / restart
-aux speed 1.5                  # Set speed
-aux speed up                   # Next speed preset
-aux repeat one                 # Set repeat (off/one/all)
-aux shuffle                    # Toggle shuffle
-aux sleep 30m                  # Sleep timer (30m, 1h, 2h, off)
-
-# Library
-aux history                    # Show play history
-aux history --today            # Today only
-aux favorites                  # List favorites (alias: aux fav)
-aux fav add <url>              # Add to favorites
-aux fav remove <video_id>      # Remove favorite
-
-# Queue
-aux queue                      # Show queue (alias: aux q)
-aux q add <url>                # Add to queue
-aux q next                     # Play next
-aux q clear                    # Clear queue
-
-# Playlists
-aux playlist list              # List playlists (alias: aux pl)
-aux pl create "Chill Vibes"    # Create playlist
-aux pl show "Chill Vibes"      # Show items
-aux pl add "Chill Vibes" <url> # Add track
-aux pl remove "Chill Vibes" <id> # Remove track
-aux pl play "Chill Vibes"      # Play all (loads to queue)
-aux pl delete "Chill Vibes"    # Delete playlist
-
-# Equalizer
-aux eq                         # Show current preset
-aux eq bass-boost              # Set preset (flat/bass-boost/vocal/treble/loudness)
-
-# AI
-aux chat "summarize this"      # Chat about current video
-aux chat --profile deep        # Use specific AI profile
-aux suggest                    # AI-powered video suggestions
+aux chat "summarize this podcast"     # get the gist without rewinding
+aux chat "what are the lyrics about?" # understand any song
+aux chat "recommend something chill"  # conversational discovery
+aux suggest                           # AI picks your next track
+aux chat                              # open-ended conversation
 ```
 
-### TUI Keybindings
-
-#### Navigation
-
-| Key | Action |
-|-----|--------|
-| `Tab` | Cycle panels |
-| `/` | New search |
-| `Enter` | Play / confirm / select |
-| `↑` `↓` / `j` `k` | Navigate list items |
-| `←` `→` | Page prev / next (Results) |
-| `Esc` | Back / close sub-view |
-| `q` | Back / quit (not in Chat/Search) |
-| `?` | Help panel |
-
-#### Playback (any panel while playing)
-
-| Key | Action |
-|-----|--------|
-| `Space` | Pause / Resume |
-| `←` `→` | Seek ±10s (non-list panels) |
-| `Shift+←` `→` | Seek ±60s |
-| `+` / `-` (or `=`) | Volume ±5% |
-| `]` / `[` | Speed up / down (0.25x–4.0x) |
-| `n` | Skip to next track |
-| `p` | Restart / previous track |
-| `r` | Cycle repeat (off → one → all) |
-| `z` | Toggle shuffle 🔀 |
-| `f` | Toggle favorite ❤️ |
-| `a` | Add/remove current track to queue 📋 |
-| `S` | Stop playback |
-| `t` | Sleep timer (15m → 30m → 1h → 2h → off) 😴 |
-| `e` | Cycle equalizer preset 🎛️ |
-
-#### Lyrics Panel
-
-| Key | Action |
-|-----|--------|
-| `Shift+↑` `↓` | Scroll lyrics manually |
-| `0` | Reset auto-scroll |
-
-#### Playlists Panel
-
-| Key | Action |
-|-----|--------|
-| `Enter` | View playlist items / Play selected item |
-| `n` | Create new playlist (inline input) |
-| `d` | Delete selected playlist |
-| `p` | Play entire playlist (loads to queue) |
-| `Esc` | Back to list / back to Search |
-
-#### Chat Panel
-
-| Key | Action |
-|-----|--------|
-| Type | Text input |
-| `Enter` | Send message to AI |
-| `↑` / `↓` | Scroll chat history |
-| `Esc` | Back to Search |
-
-### AI Companion 🤖
-
-Chat with AI about the video you're watching. Transcripts are automatically fetched for context.
+**Works with your favorite LLM** — OpenAI, Anthropic, Gemini, or local Ollama:
 
 ```bash
-# CLI: one-shot or interactive
-aux chat "summarize this video"
-aux chat                         # Interactive mode
-
-# TUI: Tab to Chat panel, type your message
+aux config ai --setup                 # 30-second guided wizard
 ```
 
-## Equalizer Presets 🎛️
+## ⌨️ Keybindings
 
-Five built-in presets using mpv's superequalizer:
+| Key | Action | | Key | Action |
+|-----|--------|--|-----|--------|
+| `Space` | Pause / Resume | | `f` | Toggle favorite ❤️ |
+| `←` `→` | Seek ±10s | | `a` | Add to queue 📋 |
+| `+` `-` | Volume ±5% | | `n` / `p` | Next / Previous |
+| `]` `[` | Speed up / down | | `r` | Cycle repeat |
+| `/` | New search | | `z` | Toggle shuffle 🔀 |
+| `e` | Cycle EQ preset 🎛️ | | `t` | Sleep timer 😴 |
 
-| Preset | Description |
-|--------|-------------|
-| `flat` | No EQ (default) |
-| `bass-boost` | Enhanced bass frequencies |
-| `vocal` | Boosted mid-range for vocals |
-| `treble` | Enhanced high frequencies |
-| `loudness` | Full-range boost |
+## 🎵 CLI commands
 
-Press `e` in TUI or use `aux eq <preset>` in CLI. The active preset persists across sessions.
-
-## Configuration
-
-### Player
+<details>
+<summary><b>Playback</b></summary>
 
 ```bash
-aux config player                       # Show current settings
-aux config player set --volume 80       # Default volume (0-100)
-aux config player set --search-results 10  # Results per search
+aux pause / resume / stop
+aux now                              # what's playing
+aux volume 80                        # set volume
+aux seek +30 / -10 / 2:30            # seek
+aux speed 1.5 / up / down            # playback speed
+aux repeat off / one / all
+aux shuffle
+aux sleep 30m / 1h / off
 ```
 
-### YouTube
+</details>
+
+<details>
+<summary><b>Library</b></summary>
 
 ```bash
-aux config youtube                      # Show current settings
-aux config youtube set --format m4a     # Audio format (m4a, opus, webm)
+aux history                          # play history
+aux favorites                        # list favorites (alias: aux fav)
+aux fav add <url>                    # add to favorites
 ```
 
-### AI Configuration
+</details>
 
-#### Interactive Setup (recommended)
+<details>
+<summary><b>Queue & Playlists</b></summary>
 
 ```bash
-aux config ai --setup        # Guided wizard — pick provider, model, paste API key
+aux queue                            # show queue (alias: aux q)
+aux q add <url>                      # add to queue
+
+aux playlist list                    # list playlists (alias: aux pl)
+aux pl create "Chill Vibes"          # create playlist
+aux pl play "Chill Vibes"            # play all
+aux pl add "Chill Vibes" <url>       # add track
 ```
 
-#### One-liner Setup
+</details>
+
+<details>
+<summary><b>Equalizer</b></summary>
+
+Five presets: `flat` · `bass-boost` · `vocal` · `treble` · `loudness`
 
 ```bash
-aux config ai set --provider openai --model gpt-4.1-mini --api-key-env OPENAI_API_KEY
-aux config ai set --provider openai --model gpt-4.1-mini --api-key sk-xxx
+aux eq                               # show current
+aux eq bass-boost                    # set preset
 ```
 
-#### Profiles
+</details>
+
+<details>
+<summary><b>Configuration</b></summary>
 
 ```bash
-# Add profiles
-aux config ai add-profile deep --provider anthropic --model claude-sonnet-4-6 --api-key-env ANTHROPIC_API_KEY
-aux config ai add-profile local --provider ollama --model llama4 --base-url http://localhost:11434
+aux config player                    # show player settings
+aux config player set --volume 80    # default volume
+aux config ai --setup                # AI setup wizard
 
-# Use profiles
-aux chat "summarize" --profile deep
-aux suggest --profile local
+# AI profiles
+aux config ai add-profile deep \
+  --provider anthropic \
+  --model claude-sonnet-4-6 \
+  --api-key-env ANTHROPIC_API_KEY
 
-# Manage profiles
-aux config ai list-profiles
-aux config ai remove-profile deep
-aux config ai test --profile local
+aux config ai add-profile local \
+  --provider ollama \
+  --model llama4 \
+  --base-url http://localhost:11434
 ```
 
-#### Custom Providers (OpenAI-compatible)
+Config file: `~/.config/aux/config.toml`
 
-```bash
-aux config ai add-profile groq \
-  --provider openai \
-  --model llama-3.3-70b \
-  --base-url https://api.groq.com/openai/v1 \
-  --api-key-env GROQ_API_KEY
-```
+</details>
 
-#### Config File
+## 🏆 aux vs Spotify
 
-`~/.config/aux/config.toml`:
-
-```toml
-[ai]
-provider = "openai"
-model = "gpt-4.1-mini"
-api_key_env = "OPENAI_API_KEY"
-
-[ai.profiles.deep]
-provider = "anthropic"
-model = "claude-sonnet-4-6"
-api_key_env = "ANTHROPIC_API_KEY"
-
-[ai.profiles.local]
-provider = "ollama"
-model = "llama4"
-base_url = "http://localhost:11434"
-```
-
-## Architecture
-
-```
-src/
-├── main.rs          # Entry point, CLI + TUI dispatch
-├── cli.rs           # clap command definitions
-├── config.rs        # TOML config (~/.config/aux/)
-├── error.rs         # Custom error types
-├── interactive.rs   # Keyboard-driven playback controls (CLI mode)
-├── util.rs          # Utilities (duration parsing, speed presets)
-├── ai/
-│   ├── chat.rs      # AI chat (OpenAI, Anthropic, Gemini, Ollama)
-│   └── transcript.rs # VTT subtitle parsing & auto-sync lyrics
-├── library/
-│   ├── db.rs        # SQLite database
-│   ├── history.rs   # Play history
-│   ├── favorites.rs # Bookmarks
-│   ├── queue.rs     # Play queue
-│   ├── playlist.rs  # Playlist management (CRUD + load-to-queue)
-│   └── search_history.rs # Search query recall
-├── player/
-│   ├── mod.rs       # MediaPlayer trait
-│   ├── mpv.rs       # mpv IPC playback (retry, timeout, audio filters)
-│   ├── state.rs     # State file (speed, repeat, shuffle, EQ, sleep)
-│   └── queue_manager.rs # Queue advancement logic
-├── tui/
-│   ├── app.rs       # TUI state (9 panels + now-playing)
-│   └── ui.rs        # ratatui rendering (tabs, tables, lyrics, chat)
-└── youtube/
-    ├── ytdlp.rs     # yt-dlp search & stream
-    └── types.rs     # VideoInfo, StreamUrl
-```
-
-## Feature Comparison with Spotify
-
-| Feature | Spotify | Aux |
-|---------|---------|------|
+| | Spotify | aux |
+|--|---------|-----|
 | Search & play | ✅ | ✅ |
-| Queue management | ✅ | ✅ |
-| Playlists (create/edit/play) | ✅ | ✅ |
-| Favorites | ✅ | ✅ |
-| Play history | ✅ | ✅ |
-| Repeat (off/one/all) | ✅ | ✅ |
-| Shuffle | ✅ | ✅ |
-| Speed control (0.25x–4x) | ✅ | ✅ |
-| Sleep timer | ✅ | ✅ |
-| Equalizer presets | ✅ | ✅ |
-| Lyrics (auto-synced) | ✅ | ✅ |
-| AI chat companion | ❌ | ✅ |
-| AI suggestions | ❌ | ✅ |
-| Terminal / keyboard-only | ❌ | ✅ |
-| Open source | ❌ | ✅ |
-| Crossfade | ✅ | ❌ |
+| Queue, playlists, favorites | ✅ | ✅ |
+| Shuffle, repeat, EQ, sleep timer | ✅ | ✅ |
+| Synced lyrics | ✅ | ✅ |
+| **AI chat companion** | ❌ | ✅ |
+| **Terminal / keyboard-only** | ❌ | ✅ |
+| **Open source** | ❌ | ✅ |
+| **Free forever** | ❌ | ✅ |
+| **1000+ audio sources** | ❌ | ✅ |
 | Multi-device | ✅ | ❌ |
-| Offline download | ✅ | ❌ |
+| Offline downloads | ✅ | ❌ |
 
-## Roadmap
+## 🛠️ Built with
 
-- [x] Phase 1: Core Player (search, play, controls)
-- [x] Phase 2: AI Companion (chat, transcript, multi-provider)
-- [x] Phase 3: Queue & Library (history, favorites, queue with SQLite)
-- [x] Phase 4: TUI (full-screen ratatui interface with 9 panels)
-- [x] Phase 5: Playlists & Equalizer (Spotify feature parity)
+Rust · [ratatui](https://github.com/ratatui/ratatui) · [mpv](https://mpv.io/) · [yt-dlp](https://github.com/yt-dlp/yt-dlp) · SQLite
 
 ## License
 
