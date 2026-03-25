@@ -901,7 +901,7 @@ async fn cmd_queue(db: &Database, action: Option<QueueAction>, config: &Config) 
 
 // ─── TUI Mode ────────────────────────────────────────────────
 
-async fn run_tui(_config: &Config, db: &Database) -> Result<()> {
+async fn run_tui(config: &Config, db: &Database) -> Result<()> {
     use crossterm::{
         event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
         execute,
@@ -927,6 +927,7 @@ async fn run_tui(_config: &Config, db: &Database) -> Result<()> {
     app.search_history = library::search_history::get_searches(db, 100).unwrap_or_default();
     let yt = YtDlp::new();
     let mut player: Option<MpvPlayer> = None;
+    let mut ai_context: Option<VideoContext> = None;
 
     loop {
         // Draw
@@ -941,6 +942,11 @@ async fn run_tui(_config: &Config, db: &Database) -> Result<()> {
             let vol = p.get_volume().await.unwrap_or(80);
             let paused = app.now_playing.as_ref().map(|np| np.paused).unwrap_or(false);
             app.update_playback(pos, dur, paused, vol);
+
+            // Keep AI context position in sync
+            if let Some(ref mut ctx) = ai_context {
+                ctx.current_position = Duration::from_secs(pos);
+            }
 
             // Sync speed/repeat/shuffle/sleep from state file
             if let Ok(state) = crate::player::state::StateFile::read() {
@@ -958,7 +964,8 @@ async fn run_tui(_config: &Config, db: &Database) -> Result<()> {
                         Panel::Search   => Panel::Results,
                         Panel::Results  => Panel::Queue,
                         Panel::Queue    => Panel::History,
-                        Panel::History  => Panel::Help,
+                        Panel::History  => Panel::Chat,
+                        Panel::Chat     => Panel::Help,
                         Panel::Help     => Panel::Search,
                     };
                     // Preload data for panels that need it
@@ -1096,6 +1103,13 @@ async fn run_tui(_config: &Config, db: &Database) -> Result<()> {
 
                                             library::history::add_to_history(db, &video, 0).ok();
                                             player = Some(p);
+                                            // Fetch transcript for AI chat context
+                                            app.set_status(format!("Playing: {} — loading transcript…", video.title));
+                                            terminal.draw(|f| ui::draw(f, &app))?;
+                                            let transcript = fetch_transcript(&video.url).await.unwrap_or(None);
+                                            ai_context = Some(VideoContext::new(video.clone(), transcript));
+                                            app.chat_messages.clear();
+                                            app.chat_scroll = 0;
                                             app.set_status(format!("Playing: {}", video.title));
                                         }
                                     }
@@ -1191,6 +1205,23 @@ async fn run_tui(_config: &Config, db: &Database) -> Result<()> {
                                                 sleep_deadline: None,
                                             });
                                             player = Some(p);
+                                            // Fetch transcript for AI chat context
+                                            app.set_status(format!("Playing: {} — loading transcript…", entry.title));
+                                            terminal.draw(|f| ui::draw(f, &app))?;
+                                            let transcript = fetch_transcript(&entry.url).await.unwrap_or(None);
+                                            let vi = crate::youtube::VideoInfo {
+                                                id: entry.video_id.clone(),
+                                                title: entry.title.clone(),
+                                                url: entry.url.clone(),
+                                                channel: entry.channel.clone(),
+                                                duration: entry.duration_secs.map(|d| d as f64),
+                                                view_count: None,
+                                                thumbnail: None,
+                                                description: None,
+                                            };
+                                            ai_context = Some(VideoContext::new(vi, transcript));
+                                            app.chat_messages.clear();
+                                            app.chat_scroll = 0;
                                             app.set_status(format!("Playing: {}", entry.title));
                                         }
                                     }
@@ -1277,12 +1308,90 @@ async fn run_tui(_config: &Config, db: &Database) -> Result<()> {
                                                 sleep_deadline: None,
                                             });
                                             player = Some(p);
+                                            // Fetch transcript for AI chat context
+                                            app.set_status(format!("Playing: {} — loading transcript…", entry.title));
+                                            terminal.draw(|f| ui::draw(f, &app))?;
+                                            let transcript = fetch_transcript(&entry.url).await.unwrap_or(None);
+                                            let vi = crate::youtube::VideoInfo {
+                                                id: entry.video_id.clone(),
+                                                title: entry.title.clone(),
+                                                url: entry.url.clone(),
+                                                channel: entry.channel.clone(),
+                                                duration: entry.duration_secs.map(|d| d as f64),
+                                                view_count: None,
+                                                thumbnail: None,
+                                                description: None,
+                                            };
+                                            ai_context = Some(VideoContext::new(vi, transcript));
+                                            app.chat_messages.clear();
+                                            app.chat_scroll = 0;
                                             app.set_status(format!("Playing: {}", entry.title));
                                         }
                                     }
                                     Err(e) => { app.set_status(format!("Failed: {}", e)); }
                                 }
                             }
+                        }
+                        _ => {}
+                    },
+
+                    Panel::Chat => match code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            app.set_panel(Panel::Search);
+                        }
+                        KeyCode::Enter => {
+                            let input = app.chat_input.trim().to_string();
+                            if !input.is_empty() {
+                                app.chat_input.clear();
+                                app.push_chat_message("user", &input);
+
+                                if let Some(ref mut ctx) = ai_context {
+                                    if let Some(ref ai_cfg) = config.ai {
+                                        match ai_cfg.resolve(None) {
+                                            Ok(resolved) => {
+                                                app.chat_loading = true;
+                                                app.set_status("AI is thinking...");
+                                                terminal.draw(|f| ui::draw(f, &app))?;
+
+                                                match ai_chat(ctx, &input, &resolved).await {
+                                                    Ok(response) => {
+                                                        app.push_chat_message("assistant", &response);
+                                                        app.set_status("Reply received");
+                                                    }
+                                                    Err(e) => {
+                                                        app.push_chat_message("assistant", &format!("Error: {}", e));
+                                                        app.set_status(format!("Chat error: {}", e));
+                                                    }
+                                                }
+                                                app.chat_loading = false;
+                                            }
+                                            Err(e) => {
+                                                app.push_chat_message("assistant", &format!("Config error: {}", e));
+                                            }
+                                        }
+                                    } else {
+                                        app.push_chat_message("assistant", "AI not configured. Run: duet config ai --setup");
+                                    }
+                                } else {
+                                    app.push_chat_message("assistant", "Play a track first to chat about it!");
+                                }
+                            }
+                            handled = true;
+                        }
+                        KeyCode::Up => {
+                            app.chat_scroll = app.chat_scroll.saturating_add(1);
+                            handled = true;
+                        }
+                        KeyCode::Down => {
+                            app.chat_scroll = app.chat_scroll.saturating_sub(1);
+                            handled = true;
+                        }
+                        KeyCode::Backspace => {
+                            app.chat_input.pop();
+                        }
+                        KeyCode::Char(c) => {
+                            app.chat_input.push(c);
+                            handled = true;
                         }
                         _ => {}
                     },

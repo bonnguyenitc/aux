@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use crate::ai::chat::ChatMessage;
 use crate::player::types::RepeatMode;
 use crate::youtube::VideoInfo;
 
@@ -9,6 +10,7 @@ pub enum Panel {
     Results,
     Queue,
     History,
+    Chat,
     Help,
 }
 
@@ -60,6 +62,15 @@ pub struct App {
     pub search_input_stash: String,
     /// Backwards-compat shim: some code reads app.mode
     pub mode: Panel,
+    // ── Chat state ───────────────────────────────────────────────
+    /// Current chat input text
+    pub chat_input: String,
+    /// Chat message history displayed in the chat panel
+    pub chat_messages: Vec<ChatMessage>,
+    /// Scroll offset for the chat message area (0 = bottom)
+    pub chat_scroll: u16,
+    /// Whether we are waiting for an AI response
+    pub chat_loading: bool,
 }
 
 impl App {
@@ -81,7 +92,20 @@ impl App {
             search_history: Vec::new(),
             search_history_index: None,
             search_input_stash: String::new(),
+            chat_input: String::new(),
+            chat_messages: Vec::new(),
+            chat_scroll: 0,
+            chat_loading: false,
         }
+    }
+
+    /// Add a chat message and reset scroll to bottom
+    pub fn push_chat_message(&mut self, role: &str, content: &str) {
+        self.chat_messages.push(ChatMessage {
+            role: role.to_string(),
+            content: content.to_string(),
+        });
+        self.chat_scroll = 0; // auto-scroll to bottom
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {

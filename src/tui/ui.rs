@@ -60,13 +60,14 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(brand, layout[0]);
 
     // Tabs
-    let tab_titles = vec!["Search", "Results", "Queue", "History", "Help"];
+    let tab_titles = vec!["Search", "Results", "Queue", "History", "Chat", "Help"];
     let selected = match app.panel {
         Panel::Search => 0,
         Panel::Results => 1,
         Panel::Queue => 2,
         Panel::History => 3,
-        Panel::Help => 4,
+        Panel::Chat => 4,
+        Panel::Help => 5,
     };
 
     let tabs = Tabs::new(tab_titles)
@@ -91,6 +92,7 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
         Panel::Results => draw_results(frame, area, app),
         Panel::Queue => draw_queue(frame, area, app),
         Panel::History => draw_history(frame, area, app),
+        Panel::Chat => draw_chat(frame, area, app),
         Panel::Help => draw_help(frame, area),
     }
 }
@@ -356,6 +358,122 @@ fn draw_history(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(list, area);
 }
 
+// ── Chat panel ──────────────────────────────────────────────────────────────
+
+fn draw_chat(frame: &mut Frame, area: Rect, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(4), Constraint::Length(3)])
+        .split(area);
+
+    // ── Message area ──────────────────────────────────────────
+    let mut lines: Vec<Line> = Vec::new();
+
+    if app.chat_messages.is_empty() {
+        let has_track = app.now_playing.is_some();
+        if has_track {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("  🎧 ", Style::default()),
+                Span::styled(
+                    "Chat about the current track! Ask questions, get summaries, or just vibe.",
+                    Style::default().fg(DIM),
+                ),
+            ]));
+        } else {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![Span::styled(
+                "  Play a track first to start chatting about it.",
+                Style::default().fg(DIM),
+            )]));
+        }
+    } else {
+        for msg in &app.chat_messages {
+            let (icon, color) = if msg.role == "user" {
+                ("🗣️", ACCENT)
+            } else {
+                ("🤖", BRAND)
+            };
+
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {} ", icon), Style::default()),
+                Span::styled(
+                    if msg.role == "user" { "You" } else { "Duet" },
+                    Style::default().fg(color).bold(),
+                ),
+            ]));
+
+            // Wrap message text to available width
+            let max_w = area.width.saturating_sub(6) as usize;
+            for line_text in msg.content.lines() {
+                // Simple char-based wrapping
+                let chars: Vec<char> = line_text.chars().collect();
+                if chars.is_empty() {
+                    lines.push(Line::from(Span::styled("    ", Style::default())));
+                } else {
+                    for chunk in chars.chunks(max_w.max(20)) {
+                        let s: String = chunk.iter().collect();
+                        lines.push(Line::from(Span::styled(
+                            format!("    {}", s),
+                            Style::default().fg(TEXT),
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    if app.chat_loading {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("  🤖 ", Style::default()),
+            Span::styled("Thinking...", Style::default().fg(WARN).italic()),
+        ]));
+    }
+
+    // Compute scroll: show the bottom of the conversation
+    let visible_h = chunks[0].height.saturating_sub(2) as usize; // -2 for border
+    let total_lines = lines.len();
+    let scroll = if total_lines > visible_h {
+        (total_lines - visible_h) as u16 - app.chat_scroll.min((total_lines - visible_h) as u16)
+    } else {
+        0
+    };
+
+    let title = format!(
+        " Chat ({} messages) ",
+        app.chat_messages.len()
+    );
+    let messages_widget = Paragraph::new(lines)
+        .scroll((scroll, 0))
+        .block(
+            Block::default()
+                .title(title)
+                .title_style(Style::default().fg(ACCENT).bold())
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(DIM)),
+        );
+    frame.render_widget(messages_widget, chunks[0]);
+
+    // ── Input area ───────────────────────────────────────────
+    let input_widget = Paragraph::new(Line::from(vec![
+        Span::styled("💬 ", Style::default()),
+        Span::styled(&app.chat_input, Style::default().fg(TEXT).bold()),
+        Span::styled("▌", Style::default().fg(ACCENT)),
+    ]))
+    .block(
+        Block::default()
+            .title(" Ask anything ")
+            .title_style(Style::default().fg(BRAND).bold())
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(ACCENT)),
+    );
+    frame.render_widget(input_widget, chunks[1]);
+}
+
 // ── Help panel ─────────────────────────────────────────────────────────────
 
 fn draw_help(frame: &mut Frame, area: Rect) {
@@ -394,6 +512,15 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         help_row("d", "Remove selected item from queue  (Queue panel only)"),
         help_row("S", "Stop playback"),
         help_row("c", "Chat hint  (use duet chat in terminal)"),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "  Chat Panel",
+            Style::default().fg(ACCENT).bold(),
+        )]),
+        Line::from(""),
+        help_row("Enter", "Send message to AI"),
+        help_row("↑ / ↓", "Scroll chat history"),
+        help_row("Esc", "Back to Search"),
         Line::from(""),
         help_row("?", "This help screen"),
     ];
@@ -528,6 +655,7 @@ fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
         Panel::Results => " Enter:play  ↑↓jk:nav  ←→:page  a:queue  f:fav  Tab:panel  Esc:back",
         Panel::Queue   => " Enter:play  ↑↓jk:nav  d:remove  Tab:panel",
         Panel::History => " Enter:replay  ↑↓jk:nav  Tab:panel",
+        Panel::Chat    => " Enter:send  ↑↓:scroll  Esc:back  Tab:panel",
         Panel::Help    => " Any key to go back",
     };
 
