@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(
     name = "duet",
-    about = "🎵 CLI YouTube player with AI companion",
+    about = "🎵 Listen music with AI agent",
     version,
     author
 )]
@@ -14,7 +14,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Search YouTube for videos
+    /// Search for audio
     Search {
         /// Search query
         #[arg(required = true)]
@@ -23,11 +23,15 @@ pub enum Commands {
         /// Number of results to show
         #[arg(short = 'n', long, default_value = "5")]
         limit: usize,
+
+        /// Search source (youtube, soundcloud, ytmusic)
+        #[arg(long, default_value = "youtube")]
+        source: String,
     },
 
-    /// Play a YouTube video (audio only)
+    /// Play audio from a URL or search query
     Play {
-        /// YouTube URL or video ID
+        /// URL or search query
         url: String,
         /// Run in background (daemon mode)
         #[arg(long, short = 'd')]
@@ -271,10 +275,11 @@ pub enum ConfigAction {
         #[command(subcommand)]
         action: Option<PlayerAction>,
     },
-    /// Configure YouTube settings
-    Youtube {
+    /// Configure media source settings
+    #[command(alias = "youtube")]
+    Media {
         #[command(subcommand)]
-        action: Option<YoutubeAction>,
+        action: Option<MediaAction>,
     },
     /// Set a config key (e.g. ai.provider, player.default_volume)
     Set {
@@ -362,16 +367,20 @@ pub enum PlayerAction {
 }
 
 #[derive(Subcommand, Debug)]
-pub enum YoutubeAction {
-    /// Set YouTube settings
+pub enum MediaAction {
+    /// Set media source settings
     Set {
         /// Preferred audio format (e.g. "m4a", "opus", "webm")
         #[arg(long)]
         format: Option<String>,
 
-        /// YouTube backend (e.g. "yt-dlp")
+        /// Media backend (e.g. "yt-dlp")
         #[arg(long)]
         backend: Option<String>,
+
+        /// Default search source (youtube, soundcloud, ytmusic)
+        #[arg(long)]
+        default_source: Option<String>,
     },
 }
 #[derive(Debug, Clone, clap::ValueEnum)]

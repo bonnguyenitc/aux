@@ -9,8 +9,8 @@ use std::path::PathBuf;
 pub struct Config {
     #[serde(default)]
     pub player: PlayerConfig,
-    #[serde(default)]
-    pub youtube: YoutubeConfig,
+    #[serde(default, alias = "youtube")]
+    pub media: MediaConfig,
     #[serde(default)]
     pub ai: Option<AiConfig>,
 }
@@ -26,11 +26,13 @@ pub struct PlayerConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct YoutubeConfig {
-    #[serde(default = "default_youtube_backend")]
+pub struct MediaConfig {
+    #[serde(default = "default_media_backend")]
     pub backend: String,
     #[serde(default = "default_audio_format")]
     pub prefer_format: String,
+    #[serde(default = "default_source")]
+    pub default_source: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -168,18 +170,21 @@ fn default_volume() -> u8 {
 fn default_search_results() -> usize {
     5
 }
-fn default_youtube_backend() -> String {
+fn default_media_backend() -> String {
     "yt-dlp".to_string()
 }
 fn default_audio_format() -> String {
     "m4a".to_string()
+}
+fn default_source() -> String {
+    "youtube".to_string()
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             player: PlayerConfig::default(),
-            youtube: YoutubeConfig::default(),
+            media: MediaConfig::default(),
             ai: None,
         }
     }
@@ -195,11 +200,12 @@ impl Default for PlayerConfig {
     }
 }
 
-impl Default for YoutubeConfig {
+impl Default for MediaConfig {
     fn default() -> Self {
         Self {
-            backend: default_youtube_backend(),
+            backend: default_media_backend(),
             prefer_format: default_audio_format(),
+            default_source: default_source(),
         }
     }
 }

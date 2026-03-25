@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::types::RepeatMode;
 use crate::error::DuetError;
-use crate::youtube::VideoInfo;
+use crate::media::MediaInfo;
 
 const STATE_PATH: &str = "/tmp/duet-state.json";
 const PID_PATH: &str = "/tmp/duet.pid";
@@ -14,7 +14,7 @@ const PID_PATH: &str = "/tmp/duet.pid";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateFile {
     pub pid: u32,
-    pub video: VideoInfo,
+    pub video: MediaInfo,
     pub started_at: DateTime<Utc>,
     pub speed: f64,
     pub repeat: RepeatMode,
@@ -35,7 +35,7 @@ impl StateFile {
         PathBuf::from(PID_PATH)
     }
 
-    pub fn new(video: VideoInfo, daemon: bool) -> Self {
+    pub fn new(video: MediaInfo, daemon: bool) -> Self {
         Self {
             pid: std::process::id(),
             video,
@@ -110,8 +110,8 @@ impl StateFile {
 mod tests {
     use super::*;
 
-    fn dummy_video() -> VideoInfo {
-        VideoInfo {
+    fn dummy_video() -> MediaInfo {
+        MediaInfo {
             id: "test123".into(),
             title: "Test Video".into(),
             channel: Some("Test Channel".into()),
@@ -120,6 +120,8 @@ mod tests {
             thumbnail: None,
             description: None,
             url: "https://youtube.com/watch?v=test123".into(),
+            source: crate::media::Source::default(),
+            extractor_key: None,
         }
     }
 

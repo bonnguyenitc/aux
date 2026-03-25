@@ -1,10 +1,10 @@
 use anyhow::Result;
-use crate::youtube::VideoInfo;
+use crate::media::MediaInfo;
 use super::db::Database;
 
 /// Add a video to the end of the queue.
 /// Returns `Ok(true)` if added, `Ok(false)` if already in queue (duplicate skipped).
-pub fn add_to_queue(db: &Database, video: &VideoInfo) -> Result<bool> {
+pub fn add_to_queue(db: &Database, video: &MediaInfo) -> Result<bool> {
     let conn = db.connection();
 
     // ── Duplicate check ─────────────────────────────────────────
@@ -26,8 +26,8 @@ pub fn add_to_queue(db: &Database, video: &VideoInfo) -> Result<bool> {
         .unwrap_or(0);
 
     conn.execute(
-        "INSERT INTO queue (video_id, title, channel, url, duration_secs, position)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO queue (video_id, title, channel, url, duration_secs, position, source)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![
             video.id,
             video.title,
@@ -35,6 +35,7 @@ pub fn add_to_queue(db: &Database, video: &VideoInfo) -> Result<bool> {
             video.url,
             video.duration.map(|d| d as i64),
             max_pos + 1,
+            video.source.as_db_str(),
         ],
     )?;
     Ok(true)
@@ -44,7 +45,7 @@ pub fn add_to_queue(db: &Database, video: &VideoInfo) -> Result<bool> {
 pub fn get_queue(db: &Database) -> Result<Vec<QueueEntry>> {
     let conn = db.connection();
     let mut stmt = conn.prepare(
-        "SELECT id, video_id, title, channel, url, duration_secs, position
+        "SELECT id, video_id, title, channel, url, duration_secs, position, source
          FROM queue ORDER BY position ASC",
     )?;
 
@@ -58,6 +59,7 @@ pub fn get_queue(db: &Database) -> Result<Vec<QueueEntry>> {
                 url: row.get(4)?,
                 duration_secs: row.get(5)?,
                 position: row.get(6)?,
+                source: row.get::<_, String>(7).unwrap_or_else(|_| "youtube".to_string()),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -71,7 +73,7 @@ pub fn pop_next(db: &Database) -> Result<Option<QueueEntry>> {
 
     let entry = conn
         .query_row(
-            "SELECT id, video_id, title, channel, url, duration_secs, position
+            "SELECT id, video_id, title, channel, url, duration_secs, position, source
              FROM queue ORDER BY position ASC LIMIT 1",
             [],
             |row| {
@@ -83,6 +85,7 @@ pub fn pop_next(db: &Database) -> Result<Option<QueueEntry>> {
                     url: row.get(4)?,
                     duration_secs: row.get(5)?,
                     position: row.get(6)?,
+                    source: row.get::<_, String>(7).unwrap_or_else(|_| "youtube".to_string()),
                 })
             },
         )
@@ -116,7 +119,7 @@ pub fn remove_from_queue(db: &Database, id: i64) -> Result<bool> {
     Ok(count > 0)
 }
 
-/// Remove a video from the queue by its YouTube video_id.
+/// Remove a video from the queue by its video_id.
 /// Returns `true` if a row was deleted.
 pub fn remove_from_queue_by_video_id(db: &Database, video_id: &str) -> Result<bool> {
     let conn = db.connection();
@@ -136,6 +139,7 @@ pub fn is_in_queue(db: &Database, video_id: &str) -> Result<bool> {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields populated from DB; not all are displayed in current UI
 pub struct QueueEntry {
     pub id: i64,
     pub video_id: String,
@@ -145,16 +149,17 @@ pub struct QueueEntry {
     pub duration_secs: Option<i64>,
     #[allow(dead_code)] // Stored for future drag-to-reorder support
     pub position: i64,
+    pub source: String,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::library::db::Database;
-    use crate::youtube::VideoInfo;
+    use crate::media::MediaInfo;
 
-    fn make_video(id: &str) -> VideoInfo {
-        VideoInfo {
+    fn make_video(id: &str) -> MediaInfo {
+        MediaInfo {
             id: id.to_string(),
             title: format!("Title for {}", id),
             channel: Some("Test Channel".to_string()),
@@ -163,6 +168,8 @@ mod tests {
             view_count: None,
             thumbnail: None,
             description: None,
+            source: crate::media::Source::default(),
+            extractor_key: None,
         }
     }
 

@@ -6,7 +6,7 @@ use crate::player::state::StateFile;
 use crate::player::types::RepeatMode;
 use crate::player::MediaPlayer;
 use crate::util::{next_speed_preset, parse_duration_str, parse_timestamp};
-use crate::youtube::types::format_duration;
+use crate::media::types::format_duration;
 
 pub async fn cmd_now(format: &str) -> Result<()> {
     let remote =

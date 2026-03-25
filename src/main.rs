@@ -9,7 +9,7 @@ mod library;
 mod player;
 mod tui;
 mod util;
-mod youtube;
+mod media;
 
 use anyhow::Result;
 use clap::Parser;
@@ -19,12 +19,12 @@ use std::io::{self, Write};
 use std::time::Instant;
 
 use ai::{ai_chat, fetch_transcript, VideoContext};
-use cli::{Cli, Commands, AiAction, ConfigAction, FavAction, PlayerAction, PlaylistAction, QueueAction, YoutubeAction};
+use cli::{Cli, Commands, AiAction, ConfigAction, FavAction, PlayerAction, PlaylistAction, QueueAction, MediaAction};
 use config::Config;
 use interactive::{run_interactive, InteractiveAction};
 use library::Database;
 use player::{MediaPlayer, MpvPlayer};
-use youtube::{YouTubeBackend, YtDlp};
+use media::{MediaBackend, YtDlp};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -54,8 +54,8 @@ async fn main() -> Result<()> {
     };
 
     match command {
-        Commands::Search { query, limit } => {
-            cmd_search(&query.join(" "), limit, &config, &db).await?;
+        Commands::Search { query, limit, source } => {
+            cmd_search(&query.join(" "), limit, &source, &config, &db).await?;
         }
         Commands::Play { url, daemon, speed, repeat } => {
             cmd_play(&url, &config, &db).await?;
@@ -194,7 +194,7 @@ async fn main() -> Result<()> {
 
 /// Returns Some(new_query) if user wants to search again, None if user quit
 async fn play_video(
-    video: &youtube::VideoInfo,
+    video: &media::MediaInfo,
     config: &Config,
     db: &Database,
 ) -> Result<Option<String>> {
@@ -323,7 +323,7 @@ async fn play_video(
                     match yt.get_stream_url(&entry.url).await {
                         Ok(stream) => {
                             player.load(&stream.audio_url).await?;
-                            current_video = crate::youtube::VideoInfo {
+                            current_video = crate::media::MediaInfo {
                                 id: entry.video_id.clone(),
                                 title: entry.title.clone(),
                                 channel: entry.channel.clone(),
@@ -331,7 +331,7 @@ async fn play_video(
                                 duration: entry.duration_secs.map(|d| d as f64),
                                 view_count: None,
                                 thumbnail: None,
-                                description: None,
+                                description: None, source: crate::media::Source::default(), extractor_key: None,
                             };
                             let transcript = crate::ai::transcript::fetch_transcript(&current_video.url)
                                 .await.unwrap_or(None);
@@ -363,7 +363,7 @@ async fn play_video(
 
 /// Print (or re-print) the now-playing header and keybind legend.
 /// Called at initial playback start and again after returning from chat mode.
-fn print_player_ui(video: &youtube::VideoInfo) {
+fn print_player_ui(video: &media::MediaInfo) {
     use colored::Colorize;
     let term_w = crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
     let divider = "─".repeat(term_w.min(80));
@@ -523,9 +523,13 @@ fn read_chat_input() -> anyhow::Result<Option<String>> {
 }
 
 
-async fn cmd_search(query: &str, limit: usize, config: &Config, db: &Database) -> Result<()> {
+async fn cmd_search(query: &str, limit: usize, source_str: &str, config: &Config, db: &Database) -> Result<()> {
     use colored::Colorize;
     use std::collections::HashSet;
+
+    let source = media::Source::from_str_arg(source_str)
+        .or_else(|| media::Source::from_str_arg(&config.media.default_source))
+        .unwrap_or(media::Source::YouTube);
 
     let mut current_query = query.to_string();
     let page_size = if limit > 0 {
@@ -535,12 +539,12 @@ async fn cmd_search(query: &str, limit: usize, config: &Config, db: &Database) -
     };
 
     loop {
-        println!("\n  {} {}{}", "🔍 Searching:".green().bold(), current_query.bold(), "\n");
+        println!("\n  {} {} {}{}", "🔍 Searching:".green().bold(), format!("[{}]", source.display_name()).dimmed(), current_query.bold(), "\n");
 
         let yt = YtDlp::new();
         // Fetch a larger batch for local pagination (up to 5 pages)
         let max_fetch = page_size * 5;
-        let all_results = yt.search(&current_query, max_fetch).await?;
+        let all_results = yt.search(&current_query, max_fetch, &source).await?;
         // Persist to search history
         library::search_history::add_search(db, &current_query).ok();
 
@@ -572,7 +576,7 @@ async fn cmd_search(query: &str, limit: usize, config: &Config, db: &Database) -
                     let global_idx = start + i + 1;
                     let duration = v
                         .duration
-                        .map(|d| youtube::types::format_duration(d as u64))
+                        .map(|d| media::types::format_duration(d as u64))
                         .unwrap_or_else(|| "LIVE".to_string());
                     let channel = v.channel.as_deref().unwrap_or("Unknown");
                     let fav   = if fav_ids.contains(&v.id)   { "❤️ " } else { "" };
@@ -635,12 +639,12 @@ async fn cmd_play(url: &str, config: &Config, db: &Database) -> Result<()> {
 
     println!("\n  {} {}\n", "🔍 Fetching:".bold(), url);
 
-    let video = if youtube::is_youtube_url(url) {
+    let video = if media::is_direct_url(url) {
         // Direct URL or video ID — fetch metadata without going through ytsearch:
         yt.fetch_info(url).await?
     } else {
         // Keyword query — use search
-        let results = yt.search(url, 1).await?;
+        let results = yt.search(url, 1, &media::Source::YouTube).await?;
         results.into_iter().next().ok_or_else(|| anyhow::anyhow!("No results for: {}", url))?
     };
 
@@ -839,9 +843,9 @@ fn cmd_history(db: &Database, limit: usize, today: bool) -> Result<()> {
         let channel = entry.channel.as_deref().unwrap_or("Unknown");
         let duration = entry
             .duration_secs
-            .map(|d| youtube::types::format_duration(d as u64))
+            .map(|d| media::types::format_duration(d as u64))
             .unwrap_or_else(|| "?".to_string());
-        let listened = youtube::types::format_duration(entry.listened_secs as u64);
+        let listened = media::types::format_duration(entry.listened_secs as u64);
         let when = entry.played_at.split('T').next().unwrap_or(&entry.played_at);
 
         println!(
@@ -859,7 +863,7 @@ fn cmd_history(db: &Database, limit: usize, today: bool) -> Result<()> {
         "  {} {} tracks  ·  {} total listened",
         "∑".dimmed(),
         entries.len(),
-        youtube::types::format_duration(entries.iter().map(|e| e.listened_secs.max(0) as u64).sum::<u64>()).green(),
+        media::types::format_duration(entries.iter().map(|e| e.listened_secs.max(0) as u64).sum::<u64>()).green(),
     );
     println!();
     Ok(())
@@ -890,7 +894,7 @@ async fn cmd_favorites(db: &Database, action: Option<FavAction>) -> Result<()> {
                 .map(|(i, v)| {
                     let duration = v
                         .duration_secs
-                        .map(|d| youtube::types::format_duration(d as u64))
+                        .map(|d| media::types::format_duration(d as u64))
                         .unwrap_or_else(|| "?".to_string());
                     let channel = v.channel.as_deref().unwrap_or("Unknown");
                     format!("{}. ❤ {}  ·  {}  ·  {}", i + 1, v.title, channel, duration)
@@ -910,7 +914,7 @@ async fn cmd_favorites(db: &Database, action: Option<FavAction>) -> Result<()> {
         }
         Some(FavAction::Add { url }) => {
             let yt = YtDlp::new();
-            let results = yt.search(&url, 1).await?;
+            let results = yt.search(&url, 1, &media::Source::YouTube).await?;
             if let Some(video) = results.first() {
                 let added = library::favorites::add_favorite(db, video)?;
                 if added {
@@ -959,7 +963,7 @@ async fn cmd_queue(db: &Database, action: Option<QueueAction>, config: &Config) 
                 let channel = entry.channel.as_deref().unwrap_or("Unknown");
                 let duration = entry
                     .duration_secs
-                    .map(|d| youtube::types::format_duration(d as u64))
+                    .map(|d| media::types::format_duration(d as u64))
                     .unwrap_or_else(|| "?".to_string());
 
                 let prefix = if i == 0 {
@@ -982,7 +986,7 @@ async fn cmd_queue(db: &Database, action: Option<QueueAction>, config: &Config) 
         }
         Some(QueueAction::Add { url }) => {
             let yt = YtDlp::new();
-            let results = yt.search(&url, 1).await?;
+            let results = yt.search(&url, 1, &media::Source::YouTube).await?;
             if let Some(video) = results.first() {
                 if library::queue::add_to_queue(db, video)? {
                     let len = library::queue::queue_length(db)?;
@@ -1064,7 +1068,7 @@ async fn cmd_playlist(db: &Database, action: Option<PlaylistAction>, config: &Co
         }
         Some(PlaylistAction::Add { name, url }) => {
             let yt = YtDlp::new();
-            let results = yt.search(&url, 1).await?;
+            let results = yt.search(&url, 1, &media::Source::YouTube).await?;
             if let Some(video) = results.first() {
                 match playlist::add_to_playlist(db, &name, video) {
                     Ok(true) => println!("  {} {} added to '{}'", "🎶", video.title.bold(), name),
@@ -1185,7 +1189,7 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
     let mut app = App::new();
     // Pre-load search history for ↑/↓ recall
     app.search_history = library::search_history::get_searches(db, 100).unwrap_or_default();
-    let yt = YtDlp::new();
+    let _yt = YtDlp::new();
     let mut player: Option<MpvPlayer> = None;
     let mut ai_context: Option<VideoContext> = None;
     let mut last_position_save = std::time::Instant::now();
@@ -1195,11 +1199,11 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
 
     // Background task handles for non-blocking I/O
     let mut pending_transcript: Option<tokio::task::JoinHandle<Option<crate::ai::transcript::Transcript>>> = None;
-    let mut pending_transcript_video: Option<crate::youtube::VideoInfo> = None;
-    let mut pending_search: Option<(tokio::task::JoinHandle<anyhow::Result<Vec<crate::youtube::VideoInfo>>>, String)> = None;
+    let mut pending_transcript_video: Option<crate::media::MediaInfo> = None;
+    let mut pending_search: Option<(tokio::task::JoinHandle<anyhow::Result<Vec<crate::media::MediaInfo>>>, String)> = None;
     let mut pending_stream: Option<(
-        tokio::task::JoinHandle<anyhow::Result<crate::youtube::types::StreamUrl>>,
-        crate::youtube::VideoInfo,
+        tokio::task::JoinHandle<anyhow::Result<crate::media::types::StreamUrl>>,
+        crate::media::MediaInfo,
         bool, // is_fav
         bool, // in_queue
     )> = None;
@@ -1399,17 +1403,17 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                     app.set_status(format!("⏭ Next: {}...", entry.title));
                     let is_fav = library::favorites::is_favorite(db, &entry.video_id).unwrap_or(false);
                     let in_queue = library::queue::is_in_queue(db, &entry.video_id).unwrap_or(false);
-                    let video = crate::youtube::VideoInfo {
+                    let video = crate::media::MediaInfo {
                         id: entry.video_id.clone(), title: entry.title.clone(),
                         channel: entry.channel.clone(), url: entry.url.clone(),
                         duration: entry.duration_secs.map(|d| d as f64),
-                        view_count: None, thumbnail: None, description: None,
+                        view_count: None, thumbnail: None, description: None, source: crate::media::Source::default(), extractor_key: None,
                     };
                     let url = entry.url.clone();
                     pending_stream = Some((
                         tokio::spawn(async move {
                             let yt = YtDlp::new();
-                            use crate::youtube::YouTubeBackend;
+                            use crate::media::MediaBackend;
                             yt.get_stream_url(&url).await
                         }),
                         video,
@@ -1503,7 +1507,13 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                 }
 
                 match app.panel {
-                    Panel::Search => match code {
+                    Panel::Search => {
+                        // Ctrl+S: cycle search source before other key handling
+                        if code == KeyCode::Char('s') && modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+                            app.cycle_search_source();
+                            continue;
+                        }
+                        match code {
                         KeyCode::Esc => {
                             app.should_quit = true;
                         }
@@ -1532,11 +1542,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 // Spawn search in background to keep TUI responsive
                                 let fetch_count = app.search_page_size * 5;
                                 let q = query.clone();
+                                let source = app.search_source.clone();
                                 pending_search = Some((
                                     tokio::spawn(async move {
                                         let yt = YtDlp::new();
-                                        use crate::youtube::YouTubeBackend;
-                                        yt.search(&q, fetch_count).await
+                                        use crate::media::MediaBackend;
+                                        yt.search(&q, fetch_count, &source).await
                                     }),
                                     query,
                                 ));
@@ -1554,7 +1565,8 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                             handled = true;
                         }
                         _ => {}
-                    },
+                    } // match code
+                    }, // Panel::Search
 
                     Panel::Results => {
                         handled = true;
@@ -1583,7 +1595,7 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 pending_stream = Some((
                                     tokio::spawn(async move {
                                         let yt = YtDlp::new();
-                                        use crate::youtube::YouTubeBackend;
+                                        use crate::media::MediaBackend;
                                         yt.get_stream_url(&url).await
                                     }),
                                     video,
@@ -1705,19 +1717,19 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                     library::playback_position::save_position(db, &np.video.id, np.position_secs, np.duration_secs).ok();
                                 }
                                 app.set_status(format!("⏳ Loading: {}...", entry.title));
-                                let video = crate::youtube::VideoInfo {
+                                let video = crate::media::MediaInfo {
                                     id: entry.video_id.clone(),
                                     title: entry.title.clone(),
                                     channel: entry.channel.clone(),
                                     duration: entry.duration_secs.map(|s| s as f64),
                                     view_count: None, thumbnail: None,
-                                    url: entry.url.clone(), description: None,
+                                    url: entry.url.clone(), description: None, source: crate::media::Source::default(), extractor_key: None,
                                 };
                                 let url = entry.url.clone();
                                 pending_stream = Some((
                                     tokio::spawn(async move {
                                         let yt = YtDlp::new();
-                                        use crate::youtube::YouTubeBackend;
+                                        use crate::media::MediaBackend;
                                         yt.get_stream_url(&url).await
                                     }),
                                     video,
@@ -1757,11 +1769,11 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         }
                         KeyCode::Char('l') => {
                             if let Some(entry) = app.queue_items.get(app.selected_index).cloned() {
-                                let video = crate::youtube::VideoInfo {
+                                let video = crate::media::MediaInfo {
                                     id: entry.video_id, title: entry.title,
                                     channel: entry.channel, url: entry.url,
                                     duration: entry.duration_secs.map(|d| d as f64),
-                                    view_count: None, thumbnail: None, description: None,
+                                    view_count: None, thumbnail: None, description: None, source: crate::media::Source::default(), extractor_key: None,
                                 };
                                 let playlists = library::playlist::list_playlists(db).unwrap_or_default();
                                 if playlists.is_empty() {
@@ -1789,18 +1801,18 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 }
                                 app.set_status(format!("⏳ Loading: {}...", entry.title));
                                 let in_queue = library::queue::is_in_queue(db, &entry.video_id).unwrap_or(false);
-                                let video = crate::youtube::VideoInfo {
+                                let video = crate::media::MediaInfo {
                                     id: entry.video_id.clone(), title: entry.title.clone(),
                                     channel: entry.channel.clone(),
                                     duration: entry.duration_secs.map(|s| s as f64),
                                     view_count: None, thumbnail: None,
-                                    url: entry.url.clone(), description: None,
+                                    url: entry.url.clone(), description: None, source: crate::media::Source::default(), extractor_key: None,
                                 };
                                 let url = entry.url.clone();
                                 pending_stream = Some((
                                     tokio::spawn(async move {
                                         let yt = YtDlp::new();
-                                        use crate::youtube::YouTubeBackend;
+                                        use crate::media::MediaBackend;
                                         yt.get_stream_url(&url).await
                                     }),
                                     video,
@@ -1844,11 +1856,11 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         }
                         KeyCode::Char('l') => {
                             if let Some(entry) = app.fav_items.get(app.selected_index).cloned() {
-                                let video = crate::youtube::VideoInfo {
+                                let video = crate::media::MediaInfo {
                                     id: entry.video_id, title: entry.title,
                                     channel: entry.channel, url: entry.url,
                                     duration: entry.duration_secs.map(|d| d as f64),
-                                    view_count: None, thumbnail: None, description: None,
+                                    view_count: None, thumbnail: None, description: None, source: crate::media::Source::default(), extractor_key: None,
                                 };
                                 let playlists = library::playlist::list_playlists(db).unwrap_or_default();
                                 if playlists.is_empty() {
@@ -1877,18 +1889,18 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 app.set_status(format!("⏳ Loading: {}...", entry.title));
                                 let is_fav = library::favorites::is_favorite(db, &entry.video_id).unwrap_or(false);
                                 let in_queue = library::queue::is_in_queue(db, &entry.video_id).unwrap_or(false);
-                                let video = crate::youtube::VideoInfo {
+                                let video = crate::media::MediaInfo {
                                     id: entry.video_id.clone(), title: entry.title.clone(),
                                     channel: entry.channel.clone(),
                                     duration: entry.duration_secs.map(|s| s as f64),
                                     view_count: None, thumbnail: None,
-                                    url: entry.url.clone(), description: None,
+                                    url: entry.url.clone(), description: None, source: crate::media::Source::default(), extractor_key: None,
                                 };
                                 let url = entry.url.clone();
                                 pending_stream = Some((
                                     tokio::spawn(async move {
                                         let yt = YtDlp::new();
-                                        use crate::youtube::YouTubeBackend;
+                                        use crate::media::MediaBackend;
                                         yt.get_stream_url(&url).await
                                     }),
                                     video,
@@ -1899,11 +1911,11 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         }
                         KeyCode::Char('l') => {
                             if let Some(entry) = app.history_items.get(app.selected_index).cloned() {
-                                let video = crate::youtube::VideoInfo {
+                                let video = crate::media::MediaInfo {
                                     id: entry.video_id, title: entry.title,
                                     channel: entry.channel, url: entry.url,
                                     duration: entry.duration_secs.map(|d| d as f64),
-                                    view_count: None, thumbnail: None, description: None,
+                                    view_count: None, thumbnail: None, description: None, source: crate::media::Source::default(), extractor_key: None,
                                 };
                                 let playlists = library::playlist::list_playlists(db).unwrap_or_default();
                                 if playlists.is_empty() {
@@ -1986,27 +1998,27 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                     library::queue::clear_queue(db).ok();
                                     let mut queued = 0usize;
                                     for ri in &remaining_items {
-                                        let rv = crate::youtube::VideoInfo {
+                                        let rv = crate::media::MediaInfo {
                                             id: ri.video_id.clone(), title: ri.title.clone(),
                                             channel: ri.channel.clone(), url: ri.url.clone(),
                                             duration: ri.duration_secs.map(|d| d as f64),
-                                            view_count: None, thumbnail: None, description: None,
+                                            view_count: None, thumbnail: None, description: None, source: crate::media::Source::default(), extractor_key: None,
                                         };
                                         if library::queue::add_to_queue(db, &rv).unwrap_or(false) { queued += 1; }
                                     }
                                     app.queue_items = library::queue::get_queue(db).unwrap_or_default();
 
-                                    let video = crate::youtube::VideoInfo {
+                                    let video = crate::media::MediaInfo {
                                         id: item.video_id.clone(), title: item.title.clone(),
                                         channel: item.channel.clone(), url: item.url.clone(),
                                         duration: item.duration_secs.map(|d| d as f64),
-                                        view_count: None, thumbnail: None, description: None,
+                                        view_count: None, thumbnail: None, description: None, source: crate::media::Source::default(), extractor_key: None,
                                     };
                                     let url = item.url.clone();
                                     pending_stream = Some((
                                         tokio::spawn(async move {
                                             let yt = YtDlp::new();
-                                            use crate::youtube::YouTubeBackend;
+                                            use crate::media::MediaBackend;
                                             yt.get_stream_url(&url).await
                                         }),
                                         video,
@@ -2042,17 +2054,17 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                         // Auto-play first
                                         if let Some(entry) = library::queue::pop_next(db).unwrap_or(None) {
                                             app.set_status(format!("⏳ Loading: {}...", entry.title));
-                                            let video = crate::youtube::VideoInfo {
+                                            let video = crate::media::MediaInfo {
                                                 id: entry.video_id.clone(), title: entry.title.clone(),
                                                 channel: entry.channel.clone(), url: entry.url.clone(),
                                                 duration: entry.duration_secs.map(|d| d as f64),
-                                                view_count: None, thumbnail: None, description: None,
+                                                view_count: None, thumbnail: None, description: None, source: crate::media::Source::default(), extractor_key: None,
                                             };
                                             let url = entry.url.clone();
                                             pending_stream = Some((
                                                 tokio::spawn(async move {
                                                     let yt = YtDlp::new();
-                                                    use crate::youtube::YouTubeBackend;
+                                                    use crate::media::MediaBackend;
                                                     yt.get_stream_url(&url).await
                                                 }),
                                                 video,
@@ -2533,11 +2545,11 @@ async fn cmd_config(action: Option<ConfigAction>, config: &mut Config) -> Result
         Some(ConfigAction::Player { action: Some(PlayerAction::Set { volume, search_results, backend }) }) => {
             cc::player_set(config, volume, search_results, backend)?;
         }
-        Some(ConfigAction::Youtube { action: None }) => {
-            cc::show_youtube(config);
+        Some(ConfigAction::Media { action: None }) => {
+            cc::show_media(config);
         }
-        Some(ConfigAction::Youtube { action: Some(YoutubeAction::Set { format, backend }) }) => {
-            cc::youtube_set(config, format, backend)?;
+        Some(ConfigAction::Media { action: Some(MediaAction::Set { format, backend, default_source }) }) => {
+            cc::media_set(config, format, backend, default_source)?;
         }
         Some(ConfigAction::Set { key, value }) => {
             cc::set_key(config, &key, &value)?;

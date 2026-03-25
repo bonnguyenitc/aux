@@ -9,7 +9,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::youtube::types::format_duration;
+use crate::media::types::format_duration;
 use super::app::{App, NowPlaying, Panel};
 
 // ── Color Palette (Premium dark theme) ─────────────────────────────────────
@@ -62,6 +62,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let brand = Paragraph::new(Line::from(vec![
         Span::styled("  🎵 ", Style::default()),
         Span::styled("duet", Style::default().fg(BRAND).bold()),
+        Span::styled(" ", Style::default()),
     ]))
     .block(
         Block::default()
@@ -197,21 +198,34 @@ fn draw_search(frame: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Length(3), Constraint::Min(3)])
         .split(area);
 
+    // Build source selector label: [▶YouTube | ☁SoundCloud | ♫YT Music]
+    let sources = crate::media::Source::searchable();
+    let source_parts: Vec<String> = sources.iter().map(|s| {
+        if s == &app.search_source {
+            format!("*{}{}*", s.icon(), s.display_name())
+        } else {
+            format!("{}{}", s.icon(), s.display_name())
+        }
+    }).collect();
+    let source_selector = source_parts.join(" | ");
+
     // Show history position in title when navigating
     let title = if let Some(idx) = app.search_history_index {
         format!(
-            " Search YouTube  ·  history {}/{} (↑↓ to navigate) ",
+            " Search [{}]  ·  history {}/{} ",
+            source_selector,
             idx + 1,
             app.search_history.len()
         )
     } else if !app.search_history.is_empty() {
         format!(
-            " Search YouTube  ·  {} saved {} ",
+            " Search [{}]  ·  {} {} ",
+            source_selector,
             app.search_history.len(),
             if app.search_history.len() == 1 { "query" } else { "queries" }
         )
     } else {
-        " Search YouTube ".to_string()
+        format!(" Search [{}] ", source_selector)
     };
 
     let border_color = if app.search_history_index.is_some() { WARN } else { ACCENT };
@@ -239,21 +253,23 @@ fn draw_search(frame: &mut Frame, area: Rect, app: &App) {
         vec![
             Span::styled("  Last: ", Style::default().fg(DIM)),
             Span::styled(preview, Style::default().fg(WARN)),
-            Span::styled("  ↑/↓ recall history  ", Style::default().fg(DIM)),
+            Span::styled("  ↑/↓ recall  ", Style::default().fg(DIM)),
+            Span::styled("Ctrl+S", Style::default().fg(ACCENT)),
+            Span::styled(" source  ", Style::default().fg(DIM)),
             Span::styled("Enter", Style::default().fg(ACCENT)),
             Span::styled(" search  ", Style::default().fg(DIM)),
             Span::styled("Tab", Style::default().fg(ACCENT)),
-            Span::styled(" panels  ", Style::default().fg(DIM)),
-            Span::styled("?", Style::default().fg(ACCENT)),
-            Span::styled(" help", Style::default().fg(DIM)),
+            Span::styled(" panels", Style::default().fg(DIM)),
         ]
     } else {
         vec![
             Span::styled("  Type to search  ", Style::default().fg(DIM)),
+            Span::styled("Ctrl+S", Style::default().fg(ACCENT)),
+            Span::styled(" change source  ", Style::default().fg(DIM)),
             Span::styled("Enter", Style::default().fg(ACCENT)),
-            Span::styled(" to search  ", Style::default().fg(DIM)),
+            Span::styled(" search  ", Style::default().fg(DIM)),
             Span::styled("Tab", Style::default().fg(ACCENT)),
-            Span::styled(" switch panels  ", Style::default().fg(DIM)),
+            Span::styled(" panels  ", Style::default().fg(DIM)),
             Span::styled("?", Style::default().fg(ACCENT)),
             Span::styled(" help  ", Style::default().fg(DIM)),
             Span::styled("q", Style::default().fg(ACCENT)),

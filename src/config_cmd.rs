@@ -81,8 +81,9 @@ pub fn show_all(config: &Config) {
     println!("  search_results  = {}", config.player.search_results);
     println!();
 
-    println!("  {}", "[youtube]".cyan().bold());
-    println!("  prefer_format   = {}", config.youtube.prefer_format);
+    println!("  {}", "[media]".cyan().bold());
+    println!("  prefer_format   = {}", config.media.prefer_format);
+    println!("  default_source  = {}", config.media.default_source);
     println!();
 
     println!("  {}", "[ai]".cyan().bold());
@@ -229,33 +230,39 @@ pub fn player_set(
     Ok(())
 }
 
-// ─── YouTube Commands ─────────────────────────────────────────
+// ─── Media Commands ───────────────────────────────────────────
 
-pub fn show_youtube(config: &Config) {
-    println!("\n  {}", "📺 YouTube Config".bold().cyan());
-    println!("  prefer_format   = {}", config.youtube.prefer_format.yellow());
-    println!("  backend         = {}", config.youtube.backend.yellow());
+pub fn show_media(config: &Config) {
+    println!("\n  {}", "🎵 Media Config".bold().cyan());
+    println!("  prefer_format   = {}", config.media.prefer_format.yellow());
+    println!("  backend         = {}", config.media.backend.yellow());
+    println!("  default_source  = {}", config.media.default_source.yellow());
     println!();
 }
 
-pub fn youtube_set(
+pub fn media_set(
     config: &mut Config,
     format: Option<String>,
     backend: Option<String>,
+    default_source: Option<String>,
 ) -> Result<()> {
     let mut changed = Vec::new();
 
     if let Some(f) = format {
-        config.youtube.prefer_format = f.clone();
+        config.media.prefer_format = f.clone();
         changed.push(format!("prefer_format = {}", f));
     }
     if let Some(b) = backend {
-        config.youtube.backend = b.clone();
+        config.media.backend = b.clone();
         changed.push(format!("backend = {}", b));
+    }
+    if let Some(s) = default_source {
+        config.media.default_source = s.clone();
+        changed.push(format!("default_source = {}", s));
     }
 
     if changed.is_empty() {
-        bail!("No flags provided. Use --format or --backend");
+        bail!("No flags provided. Use --format, --backend, or --default-source");
     }
 
     config.save()?;
@@ -430,11 +437,14 @@ pub fn set_key(config: &mut Config, key: &str, value: &str) -> Result<()> {
             }
             config.player.search_results = v;
         }
-        "youtube.prefer_format" => {
-            config.youtube.prefer_format = value.to_string();
+        "media.prefer_format" | "youtube.prefer_format" => {
+            config.media.prefer_format = value.to_string();
+        }
+        "media.default_source" => {
+            config.media.default_source = value.to_string();
         }
         _ => bail!(
-            "Unknown config key: '{}'.\nValid keys: ai.provider, ai.model, ai.api_key_env, ai.base_url, player.default_volume, player.search_results, youtube.prefer_format",
+            "Unknown config key: '{}'.\nValid keys: ai.provider, ai.model, ai.api_key_env, ai.base_url, player.default_volume, player.search_results, media.prefer_format, media.default_source",
             key
         ),
     }
@@ -456,7 +466,8 @@ pub fn get_key(config: &Config, key: &str) -> Result<String> {
         "ai.base_url" => config.ai.as_ref().and_then(|a| a.base_url.clone()),
         "player.default_volume" => Some(config.player.default_volume.to_string()),
         "player.search_results" => Some(config.player.search_results.to_string()),
-        "youtube.prefer_format" => Some(config.youtube.prefer_format.clone()),
+        "media.prefer_format" | "youtube.prefer_format" => Some(config.media.prefer_format.clone()),
+        "media.default_source" => Some(config.media.default_source.clone()),
         _ => bail!("Unknown config key: '{}'", key),
     };
 

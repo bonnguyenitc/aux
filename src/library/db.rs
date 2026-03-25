@@ -25,6 +25,7 @@ impl Database {
             conn: Mutex::new(conn),
         };
         db.init_tables()?;
+        db.run_migrations()?;
 
         Ok(db)
     }
@@ -33,6 +34,30 @@ impl Database {
         let dirs = ProjectDirs::from("", "", "duet")
             .context("Could not determine data directory")?;
         Ok(dirs.data_dir().join("duet.db"))
+    }
+
+    /// Run schema migrations (idempotent).
+    fn run_migrations(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+
+        // Migration 1: Add source column to content tables
+        let tables = ["history", "favorites", "queue", "playlist_items"];
+        for table in tables {
+            let has_source: bool = conn
+                .prepare(&format!("PRAGMA table_info({})", table))?
+                .query_map([], |row| row.get::<_, String>(1))?
+                .filter_map(|r| r.ok())
+                .any(|name| name == "source");
+
+            if !has_source {
+                conn.execute_batch(&format!(
+                    "ALTER TABLE {} ADD COLUMN source TEXT NOT NULL DEFAULT 'youtube';",
+                    table
+                ))?;
+            }
+        }
+
+        Ok(())
     }
 
     fn init_tables(&self) -> Result<()> {
@@ -124,6 +149,7 @@ impl Database {
             conn: Mutex::new(conn),
         };
         db.init_tables()?;
+        db.run_migrations()?;
         Ok(db)
     }
 

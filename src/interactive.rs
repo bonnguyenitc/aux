@@ -11,7 +11,7 @@ use crate::ai::transcript::Transcript;
 use crate::library::Database;
 use crate::player::{MediaPlayer, MpvPlayer};
 use crate::player::types::RepeatMode;
-use crate::youtube::types::{format_duration, VideoInfo};
+use crate::media::types::{format_duration, MediaInfo};
 use crate::util::next_speed_preset;
 
 /// Actions that require leaving the interactive loop (need the player stopped or suspended)
@@ -28,7 +28,7 @@ pub enum InteractiveAction {
 
 pub async fn run_interactive(
     player: &mut MpvPlayer,
-    video: &VideoInfo,
+    video: &MediaInfo,
     db: &Database,
     transcript: Option<&Transcript>,
 ) -> Result<InteractiveAction> {
@@ -88,7 +88,7 @@ impl PlayerState {
 
 async fn interactive_loop(
     player: &MpvPlayer,
-    video: &VideoInfo,
+    video: &MediaInfo,
     db: &Database,
     transcript: Option<&Transcript>,
 ) -> Result<InteractiveAction> {

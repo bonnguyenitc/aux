@@ -2,24 +2,17 @@ use anyhow::{bail, Context, Result};
 use tokio::process::Command;
 
 use crate::error::DuetError;
-use super::types::{StreamUrl, VideoInfo};
-use super::YouTubeBackend;
+use super::source::Source;
+use super::types::{StreamUrl, MediaInfo};
+use super::MediaBackend;
 
 pub struct YtDlp;
 
-/// Returns true if `input` looks like a YouTube URL or bare video ID,
+/// Returns true if `input` looks like a URL (any protocol),
 /// rather than a keyword search query.
-pub fn is_youtube_url(input: &str) -> bool {
+pub fn is_direct_url(input: &str) -> bool {
     let trimmed = input.trim();
-    // Full URLs
-    if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
-        return true;
-    }
-    // Bare video IDs: 11 alphanumeric / dash / underscore chars
-    if trimmed.len() == 11 && trimmed.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
-        return true;
-    }
-    false
+    trimmed.starts_with("https://") || trimmed.starts_with("http://")
 }
 
 impl YtDlp {
@@ -44,10 +37,11 @@ impl YtDlp {
 }
 
 impl YtDlp {
-    /// Fetch video info directly from a URL or video ID (no `ytsearch:` prefix).
-    pub async fn fetch_info(&self, url: &str) -> Result<VideoInfo> {
-        // Normalise bare video IDs to a full URL
+    /// Fetch media info directly from a URL (any platform yt-dlp supports).
+    pub async fn fetch_info(&self, url: &str) -> Result<MediaInfo> {
+        // Normalise bare video IDs to a full YouTube URL (backward compat)
         let resolved = if !url.contains('.')
+            && !url.starts_with("http")
             && url.len() == 11
             && url.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
         {
@@ -73,16 +67,22 @@ impl YtDlp {
             anyhow::anyhow!("yt-dlp returned no output for URL: {}", url)
         })?;
 
-        let info: VideoInfo = serde_json::from_str(first_line)
+        let mut info: MediaInfo = serde_json::from_str(first_line)
             .context("Failed to parse yt-dlp JSON output")?;
+
+        info.resolve_source();
 
         Ok(info)
     }
 }
 
-impl YouTubeBackend for YtDlp {
-    async fn search(&self, query: &str, limit: usize) -> Result<Vec<VideoInfo>> {
-        let search_query = format!("ytsearch{}:{}", limit, query);
+impl MediaBackend for YtDlp {
+    async fn search(&self, query: &str, limit: usize, source: &Source) -> Result<Vec<MediaInfo>> {
+        let prefix = source.search_prefix().ok_or_else(|| {
+            anyhow::anyhow!("{} does not support search. Use a direct URL instead.", source)
+        })?;
+
+        let search_query = format!("{}{}:{}", prefix, limit, query);
 
         let output = Command::new("yt-dlp")
             .args([
@@ -107,8 +107,11 @@ impl YouTubeBackend for YtDlp {
             if line.trim().is_empty() {
                 continue;
             }
-            match serde_json::from_str::<VideoInfo>(line) {
-                Ok(info) => results.push(info),
+            match serde_json::from_str::<MediaInfo>(line) {
+                Ok(mut info) => {
+                    info.resolve_source();
+                    results.push(info);
+                }
                 Err(e) => {
                     eprintln!("Warning: failed to parse result: {}", e);
                     continue;

@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use super::source::Source;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct VideoInfo {
+pub struct MediaInfo {
     pub id: String,
     pub title: String,
     #[serde(default)]
@@ -17,9 +18,24 @@ pub struct VideoInfo {
     /// Video description — used as fallback when no subtitles are available.
     #[serde(default)]
     pub description: Option<String>,
+    /// Detected from yt-dlp extractor_key, populated after deserialization.
+    #[serde(skip)]
+    pub source: Source,
+    /// Raw extractor key from yt-dlp JSON.
+    #[serde(default)]
+    pub extractor_key: Option<String>,
 }
 
-impl fmt::Display for VideoInfo {
+impl MediaInfo {
+    /// Post-deserialization: populate `source` from `extractor_key`.
+    pub fn resolve_source(&mut self) {
+        if let Some(ref key) = self.extractor_key {
+            self.source = Source::from_extractor_key(key);
+        }
+    }
+}
+
+impl fmt::Display for MediaInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let channel = self.channel.as_deref().unwrap_or("Unknown");
         let duration = self
@@ -27,7 +43,7 @@ impl fmt::Display for VideoInfo {
             .map(|d| format_duration(d as u64))
             .unwrap_or_else(|| "LIVE".to_string());
 
-        write!(f, "{} — {} [{}]", self.title, channel, duration)
+        write!(f, "{} {} — {} [{}]", self.source.icon(), self.title, channel, duration)
     }
 }
 

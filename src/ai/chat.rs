@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::config::ResolvedAiConfig;
-use crate::youtube::VideoInfo;
+use crate::media::MediaInfo;
 use super::transcript::Transcript;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,14 +13,14 @@ pub struct ChatMessage {
 }
 
 pub struct VideoContext {
-    pub video: VideoInfo,
+    pub video: MediaInfo,
     pub transcript: Option<Transcript>,
     pub current_position: Duration,
     pub chat_history: Vec<ChatMessage>,
 }
 
 impl VideoContext {
-    pub fn new(video: VideoInfo, transcript: Option<Transcript>) -> Self {
+    pub fn new(video: MediaInfo, transcript: Option<Transcript>) -> Self {
         Self {
             video,
             transcript,
@@ -43,7 +43,7 @@ impl VideoContext {
         if let Some(dur) = self.video.duration {
             prompt.push_str(&format!(
                 "Duration: {}\n",
-                crate::youtube::types::format_duration(dur as u64)
+                crate::media::types::format_duration(dur as u64)
             ));
         }
 

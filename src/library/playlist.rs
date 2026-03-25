@@ -1,8 +1,9 @@
 use anyhow::Result;
-use crate::youtube::VideoInfo;
+use crate::media::MediaInfo;
 use super::db::Database;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields populated from DB; not all are displayed in current UI
 pub struct Playlist {
     pub id: i64,
     pub name: String,
@@ -11,6 +12,7 @@ pub struct Playlist {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields populated from DB; not all are displayed in current UI
 pub struct PlaylistItem {
     pub id: i64,
     pub video_id: String,
@@ -72,7 +74,7 @@ pub fn list_playlists(db: &Database) -> Result<Vec<Playlist>> {
 
 /// Add a video to a playlist.
 /// Returns Ok(true) if added, Ok(false) if already in playlist.
-pub fn add_to_playlist(db: &Database, playlist_name: &str, video: &VideoInfo) -> Result<bool> {
+pub fn add_to_playlist(db: &Database, playlist_name: &str, video: &MediaInfo) -> Result<bool> {
     let conn = db.connection();
 
     // Find playlist
@@ -171,7 +173,7 @@ pub fn load_playlist_to_queue(db: &Database, playlist_name: &str) -> Result<usiz
     let items = get_playlist_items(db, playlist_name)?;
     let mut added = 0;
     for item in &items {
-        let video = VideoInfo {
+        let video = MediaInfo {
             id: item.video_id.clone(),
             title: item.title.clone(),
             channel: item.channel.clone(),
@@ -180,6 +182,8 @@ pub fn load_playlist_to_queue(db: &Database, playlist_name: &str) -> Result<usiz
             view_count: None,
             thumbnail: None,
             description: None,
+            source: crate::media::Source::default(),
+            extractor_key: None,
         };
         if super::queue::add_to_queue(db, &video)? {
             added += 1;
@@ -192,10 +196,10 @@ pub fn load_playlist_to_queue(db: &Database, playlist_name: &str) -> Result<usiz
 mod tests {
     use super::*;
     use crate::library::db::Database;
-    use crate::youtube::VideoInfo;
+    use crate::media::MediaInfo;
 
-    fn video(id: &str) -> VideoInfo {
-        VideoInfo {
+    fn video(id: &str) -> MediaInfo {
+        MediaInfo {
             id: id.into(),
             title: format!("Video {}", id),
             channel: Some("Channel".into()),
@@ -204,6 +208,8 @@ mod tests {
             view_count: None,
             thumbnail: None,
             description: None,
+            source: crate::media::Source::default(),
+            extractor_key: None,
         }
     }
 

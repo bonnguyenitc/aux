@@ -2,7 +2,7 @@
 name = "duet"
 version = "0.1.0"
 edition = "2021"
-description = "CLI YouTube player with AI companion"
+description = "Listen music with AI agent — universal audio player powered by yt-dlp"
 license = "MIT"
 
 [dependencies]

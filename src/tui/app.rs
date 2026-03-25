@@ -4,7 +4,7 @@ use crate::ai::transcript::Transcript;
 use crate::library::favorites::FavoriteEntry;
 use crate::library::playlist::Playlist;
 use crate::player::types::RepeatMode;
-use crate::youtube::VideoInfo;
+use crate::media::{MediaInfo, Source};
 
 /// Active body panel shown in the TUI
 #[derive(Debug, Clone, PartialEq)]
@@ -27,7 +27,7 @@ pub type AppMode = Panel;
 /// Playback state mirrored from mpv + state file
 #[derive(Debug, Clone)]
 pub struct NowPlaying {
-    pub video: VideoInfo,
+    pub video: MediaInfo,
     pub position_secs: u64,
     pub duration_secs: u64,
     pub paused: bool,
@@ -47,9 +47,9 @@ pub struct App {
     pub panel: Panel,
     pub search_input: String,
     /// Full cached search results from yt-dlp (all pages)
-    pub all_search_results: Vec<VideoInfo>,
+    pub all_search_results: Vec<MediaInfo>,
     /// Current page slice — computed from `all_search_results`
-    pub search_results: Vec<VideoInfo>,
+    pub search_results: Vec<MediaInfo>,
     /// Current page index (0-based)
     pub search_page: usize,
     /// Items per page
@@ -100,13 +100,16 @@ pub struct App {
     pub saved_positions: std::collections::HashMap<String, u64>,
     // ── Pending resume seek (deferred until mpv loads stream) ──
     pub pending_resume_seek: Option<u64>,
+    // ── Search source ────────────────────────────────────────────
+    /// Active search source for TUI search (cycle with Ctrl+S)
+    pub search_source: Source,
 }
 
 /// Popup state: user is choosing which playlist to add a video to
 #[derive(Debug, Clone)]
 pub struct PlaylistPicker {
     /// The video to add
-    pub video: VideoInfo,
+    pub video: MediaInfo,
     /// Available playlists to pick from
     pub playlists: Vec<Playlist>,
     /// Currently highlighted index
@@ -147,6 +150,7 @@ impl App {
             help_scroll: 0,
             saved_positions: std::collections::HashMap::new(),
             pending_resume_seek: None,
+            search_source: Source::YouTube,
         }
     }
 
@@ -249,7 +253,7 @@ impl App {
     }
 
     /// Set search results from a yt-dlp batch and show the first page
-    pub fn set_search_results(&mut self, results: Vec<VideoInfo>) {
+    pub fn set_search_results(&mut self, results: Vec<MediaInfo>) {
         self.all_search_results = results;
         self.search_page = 0;
         self.refresh_search_page();
@@ -320,7 +324,7 @@ impl App {
     // ── Playlist picker helpers ─────────────────────────────────────
 
     /// Open the "add to playlist" popup for a given video.
-    pub fn open_playlist_picker(&mut self, video: VideoInfo, playlists: Vec<Playlist>) {
+    pub fn open_playlist_picker(&mut self, video: MediaInfo, playlists: Vec<Playlist>) {
         self.playlist_picker = Some(PlaylistPicker {
             video,
             playlists,
@@ -349,5 +353,15 @@ impl App {
     /// Close the picker popup
     pub fn close_playlist_picker(&mut self) {
         self.playlist_picker = None;
+    }
+
+    /// Cycle through searchable sources (YouTube → SoundCloud → YT Music → …)
+    pub fn cycle_search_source(&mut self) {
+        let searchable = Source::searchable();
+        if searchable.is_empty() { return; }
+        let current_pos = searchable.iter().position(|s| s == &self.search_source).unwrap_or(0);
+        let next_pos = (current_pos + 1) % searchable.len();
+        self.search_source = searchable[next_pos].clone();
+        self.set_status(format!("Search source: {}", self.search_source.display_name()));
     }
 }

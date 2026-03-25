@@ -1,19 +1,20 @@
 use anyhow::Result;
-use crate::youtube::VideoInfo;
+use crate::media::MediaInfo;
 use super::db::Database;
 
 /// Add a video to favorites
-pub fn add_favorite(db: &Database, video: &VideoInfo) -> Result<bool> {
+pub fn add_favorite(db: &Database, video: &MediaInfo) -> Result<bool> {
     let conn = db.connection();
     let result = conn.execute(
-        "INSERT OR IGNORE INTO favorites (video_id, title, channel, url, duration_secs)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT OR IGNORE INTO favorites (video_id, title, channel, url, duration_secs, source)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         rusqlite::params![
             video.id,
             video.title,
             video.channel,
             video.url,
             video.duration.map(|d| d as i64),
+            video.source.as_db_str(),
         ],
     )?;
     Ok(result > 0) // true if actually inserted (wasn't already there)
@@ -44,7 +45,7 @@ pub fn is_favorite(db: &Database, video_id: &str) -> Result<bool> {
 pub fn get_favorites(db: &Database) -> Result<Vec<FavoriteEntry>> {
     let conn = db.connection();
     let mut stmt = conn.prepare(
-        "SELECT video_id, title, channel, url, duration_secs, added_at
+        "SELECT video_id, title, channel, url, duration_secs, added_at, source
          FROM favorites ORDER BY added_at DESC",
     )?;
 
@@ -57,6 +58,7 @@ pub fn get_favorites(db: &Database) -> Result<Vec<FavoriteEntry>> {
                 url: row.get(3)?,
                 duration_secs: row.get(4)?,
                 added_at: row.get(5)?,
+                source: row.get::<_, String>(6).unwrap_or_else(|_| "youtube".to_string()),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -73,4 +75,5 @@ pub struct FavoriteEntry {
     pub url: String,
     pub duration_secs: Option<i64>,
     pub added_at: String,
+    pub source: String,
 }

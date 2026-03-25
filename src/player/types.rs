@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::youtube::VideoInfo;
+use crate::media::MediaInfo;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum RepeatMode {
@@ -39,7 +39,7 @@ impl Default for RepeatMode {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct NowPlayingInfo {
-    pub video: VideoInfo,
+    pub video: MediaInfo,
     pub position_secs: f64,
     pub duration_secs: f64,
     pub volume: u8,

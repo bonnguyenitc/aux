@@ -1,8 +1,8 @@
 # duet 🎵
 
-A CLI YouTube player with AI companion — written in Rust.
+Listen music with AI agent — a universal audio player written in Rust.
 
-Search, play, and discuss YouTube content right from your terminal. Features a full TUI mode with 9 panels, AI chat companion, auto-synced lyrics, playlists, equalizer, sleep timer, and queue management.
+Search and play audio from YouTube, SoundCloud, YT Music, and 1000+ sites supported by yt-dlp. Features a full TUI mode with 9 panels, AI chat companion, auto-synced lyrics, playlists, equalizer, sleep timer, and queue management.
 
 ## Requirements
 
@@ -32,8 +32,10 @@ Press `Tab` to cycle between panels, `?` for built-in help.
 
 ```bash
 # Search & play
-duet search "lofi coding music"
-duet play <url>
+duet search "lofi coding music"                # YouTube (default)
+duet search "ambient" --source soundcloud       # SoundCloud
+duet search "focus beats" --source ytmusic       # YT Music
+duet play <url>                                  # Any supported URL
 duet play <url> --daemon        # Background playback
 duet play <url> --speed 1.5     # Start at 1.5x speed
 
