@@ -365,23 +365,19 @@ async fn play_video(
 /// Called at initial playback start and again after returning from chat mode.
 fn print_player_ui(video: &youtube::VideoInfo) {
     use colored::Colorize;
+    let term_w = crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
+    let divider = "─".repeat(term_w.min(80));
     println!();
+    println!("  {} {}", "▶ Now playing:".green().bold(), video.title.bold());
+    println!("  {} {}", "🎵".dimmed(), video.channel.as_deref().unwrap_or("Unknown").dimmed());
+    println!("  {}", divider.dimmed());
     println!(
-        "  {} {}",
-        "▶ Now playing:".green().bold(),
-        video.title.bold()
-    );
-    println!(
-        "  {} {}",
-        "🎵 Channel:".dimmed(),
-        video.channel.as_deref().unwrap_or("Unknown").dimmed()
-    );
-    println!(
-        "  {} pause  {} seek±10s  {} seek±60s  {} vol  {} speed  {} repeat  {} shuffle  {} eq  {} fav  {} queue  {} sleep  {} search  {} chat  {} quit",
-        "[spc]".cyan(), "[←→]".cyan(), "[⇧←→]".cyan(), "[↑↓]".cyan(),
-        "[]/[]".cyan(), "[r]".cyan(), "[z]".cyan(), "[e]".cyan(), "[f]".cyan(),
+        "  {} pause  {} seek  {} vol  {} speed  {} repeat  {} shuf  {} eq  {} fav  {} queue  {} sleep  {} search  {} chat  {} quit",
+        "[spc]".cyan(), "[←→]".cyan(), "[↑↓]".cyan(), "[+/-]".cyan(),
+        "[r]".cyan(), "[x]".cyan(), "[e]".cyan(), "[f]".cyan(),
         "[a]".cyan(), "[t]".cyan(), "[s]".cyan(), "[c]".cyan(), "[q]".cyan(),
     );
+    println!("  {}", divider.dimmed());
     println!();
 }
 
@@ -390,7 +386,7 @@ fn print_player_ui_inline(title: &str, channel: Option<&str>) {
     use colored::Colorize;
     println!(
         "  {} {}  ·  {}",
-        "▶ Now playing:".green().bold(),
+        "▶".green().bold(),
         title.bold(),
         channel.unwrap_or("Unknown").dimmed(),
     );
@@ -539,7 +535,7 @@ async fn cmd_search(query: &str, limit: usize, config: &Config, db: &Database) -
     };
 
     loop {
-        println!("\n  {} {}\n", "🔍 Searching:".bold(), current_query);
+        println!("\n  {} {}{}", "🔍 Searching:".green().bold(), current_query.bold(), "\n");
 
         let yt = YtDlp::new();
         // Fetch a larger batch for local pagination (up to 5 pages)
@@ -581,7 +577,7 @@ async fn cmd_search(query: &str, limit: usize, config: &Config, db: &Database) -
                     let channel = v.channel.as_deref().unwrap_or("Unknown");
                     let fav   = if fav_ids.contains(&v.id)   { "❤️ " } else { "" };
                     let queue = if queue_ids.contains(&v.id)  { "📋" } else { "" };
-                    format!("{}. {}{}{} — {} [{}]", global_idx, fav, queue, v.title, channel, duration)
+                    format!("{}. {}{}{} · {} · {}", global_idx, fav, queue, v.title, channel, duration)
                 })
                 .collect();
 
@@ -721,13 +717,17 @@ fn select_video(items: &[String], query: &str, page: &PageInfo) -> Result<Select
         // Header (3 lines)
         queue!(
             io::stdout(),
+            SetForegroundColor(Color::DarkGreen),
             Print(format!(
-                "\r\n  🔍 Results for: {}  (page {}/{})\r\n  {}\r\n",
+                "\r\n  ✦ Results for: \x1b[0;1m{}\x1b[0;32m  (page {}/{})\r\n",
                 query,
                 page.current + 1,
                 page.total,
-                divider,
             )),
+            ResetColor,
+            SetForegroundColor(Color::DarkGrey),
+            Print(format!("  {}\r\n", divider)),
+            ResetColor,
         )?;
 
         // Items
@@ -772,7 +772,9 @@ fn select_video(items: &[String], query: &str, page: &PageInfo) -> Result<Select
         };
         queue!(
             io::stdout(),
+            SetForegroundColor(Color::DarkGrey),
             Print(format!("\r\n  {}\r\n", divider)),
+            ResetColor,
             Print(format!(
                 "  {}{}\r\n",
                 nav_parts.join("   "),
@@ -816,16 +818,20 @@ fn select_video(items: &[String], query: &str, page: &PageInfo) -> Result<Select
 // ─── History ─────────────────────────────────────────────────
 
 fn cmd_history(db: &Database, limit: usize, today: bool) -> Result<()> {
+    let term_w = crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
+    let divider = "─".repeat(term_w.min(70));
     let entries = if today {
-        println!("\n  {} {}\n", "📜".bold(), "Today's History".bold());
+        println!("\n  {} {}", "📅".bold(), "Today's Listening History".bold());
         library::history::get_today_history(db)?
     } else {
-        println!("\n  {} {}\n", "📜".bold(), "Play History".bold());
+        println!("\n  {} {}", "📜".bold(), "Play History".bold());
         library::history::get_history(db, limit)?
     };
+    println!("  {}", divider.dimmed());
 
     if entries.is_empty() {
-        println!("  {}", "No history yet. Play some music!".dimmed());
+        println!("  {} {}", "🎵".dimmed(), "No history yet. Play some music!".dimmed());
+        println!();
         return Ok(());
     }
 
@@ -836,19 +842,26 @@ fn cmd_history(db: &Database, limit: usize, today: bool) -> Result<()> {
             .map(|d| youtube::types::format_duration(d as u64))
             .unwrap_or_else(|| "?".to_string());
         let listened = youtube::types::format_duration(entry.listened_secs as u64);
+        let when = entry.played_at.split('T').next().unwrap_or(&entry.played_at);
 
         println!(
-            "  {}. {} — {} [{}] (listened: {}) — {}",
-            i + 1,
+            "  {} {}  ·  {}  ·  {} {}  ·  {}",
+            format!("{:>3}.", i + 1).dimmed(),
             entry.title.bold(),
             channel.dimmed(),
-            duration.dimmed(),
-            listened.green(),
-            entry.played_at.dimmed()
+            "⏱".dimmed(),
+            format!("{}/{}", listened, duration).green(),
+            when.dimmed()
         );
     }
+    println!("  {}", divider.dimmed());
+    println!(
+        "  {} {} tracks  ·  {} total listened",
+        "∑".dimmed(),
+        entries.len(),
+        youtube::types::format_duration(entries.iter().map(|e| e.listened_secs.max(0) as u64).sum::<u64>()).green(),
+    );
     println!();
-
     Ok(())
 }
 
@@ -863,9 +876,11 @@ async fn cmd_favorites(db: &Database, action: Option<FavAction>) -> Result<()> {
 
             if entries.is_empty() {
                 println!(
-                    "  {}",
+                    "  {} {}",
+                    "└".dimmed(),
                     "No favorites yet. Press [f] while playing to add one!".dimmed()
                 );
+                println!();
                 return Ok(());
             }
 
@@ -878,7 +893,7 @@ async fn cmd_favorites(db: &Database, action: Option<FavAction>) -> Result<()> {
                         .map(|d| youtube::types::format_duration(d as u64))
                         .unwrap_or_else(|| "?".to_string());
                     let channel = v.channel.as_deref().unwrap_or("Unknown");
-                    format!("{}. {} — {} [{}]", i + 1, v.title, channel, duration)
+                    format!("{}. ❤ {}  ·  {}  ·  {}", i + 1, v.title, channel, duration)
                 })
                 .collect();
 
@@ -929,11 +944,16 @@ async fn cmd_queue(db: &Database, action: Option<QueueAction>, config: &Config) 
 
             if entries.is_empty() {
                 println!(
-                    "  {}",
-                    "Queue is empty. Press [a] while playing to add videos!".dimmed()
+                    "  {} {}",
+                    "└".dimmed(),
+                    "Queue is empty. Press [a] while playing to add tracks!".dimmed()
                 );
+                println!();
                 return Ok(());
             }
+
+            let term_w = crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
+            let divider = "─".repeat(term_w.min(70));
 
             for (i, entry) in entries.iter().enumerate() {
                 let channel = entry.channel.as_deref().unwrap_or("Unknown");
@@ -943,19 +963,21 @@ async fn cmd_queue(db: &Database, action: Option<QueueAction>, config: &Config) 
                     .unwrap_or_else(|| "?".to_string());
 
                 let prefix = if i == 0 {
-                    "▶".green().to_string()
+                    format!("{}", "▶".green())
                 } else {
-                    format!("{}", i + 1)
+                    format!("{:>3}", i + 1)
                 };
 
                 println!(
-                    "  {}. {} — {} [{}]",
+                    "  {}. {}  ·  {}  ·  {}",
                     prefix,
                     entry.title.bold(),
                     channel.dimmed(),
                     duration.dimmed()
                 );
             }
+            println!("  {}", divider.dimmed());
+            println!("  {} {} tracks in queue", "∑".dimmed(), entries.len());
             println!();
         }
         Some(QueueAction::Add { url }) => {

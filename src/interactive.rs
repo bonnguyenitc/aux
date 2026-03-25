@@ -120,10 +120,12 @@ async fn interactive_loop(
 
             let bar_width: usize = 28;
             let filled = (progress * bar_width as f64) as usize;
+            let remaining = bar_width.saturating_sub(filled + 1);
             let bar = format!(
-                "{}{}",
-                "█".repeat(filled),
-                "░".repeat(bar_width - filled)
+                "{}{}{}",
+                "━".repeat(filled).green(),
+                "●".bold(),
+                "─".repeat(remaining).dimmed()
             );
 
             let play_icon = if paused { "⏸" } else { "▶" };
@@ -136,14 +138,20 @@ async fn interactive_loop(
             let fav_icon    = if state.is_fav  { " ❤️" } else { "" };
             let queue_icon  = if state.in_queue { " 📋" } else { "" };
 
+            let speed_str = if (speed - 1.0_f64).abs() > 0.01 {
+                format!("{}", format!("{}x", speed).yellow())
+            } else {
+                format!("{}x", speed)
+            };
+
             print!(
-                "\r  {} {} {}/{} 🔊{}% ⚡{}x{}{}{}{}   ",
+                "\r  {} {} {} {} · 🔊{}% · {}{}{}{}{}   ",
                 play_icon,
-                bar.green(),
+                bar,
                 format_duration(pos_s).cyan(),
-                format_duration(dur_s).dimmed(),
+                format!("/ {}", format_duration(dur_s)).dimmed(),
                 vol,
-                speed,
+                speed_str,
                 repeat_icon,
                 shuffle_icon,
                 fav_icon,

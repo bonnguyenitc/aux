@@ -30,18 +30,26 @@ pub async fn cmd_now(format: &str) -> Result<()> {
             );
         }
         _ => {
-            println!("\n  {} {}\n", status.bold(), info.video.title.bold());
+            let progress = if info.duration_secs > 0.0 {
+                (info.position_secs as f64 / info.duration_secs as f64).min(1.0)
+            } else { 0.0 };
+            let bar_w: usize = 30;
+            let filled = (progress * bar_w as f64) as usize;
+            let remaining = bar_w.saturating_sub(filled + 1);
+            let bar = format!("{}●{}", "━".repeat(filled), "─".repeat(remaining));
+
+            println!("\n  {} {}", status.bold(), info.video.title.bold());
             println!("  🎵 {}", ch);
-            println!("  ⏱  {} / {}", pos, dur);
+            println!("  {} {} {} / {}", bar.green(), pos.cyan(), "/".dimmed(), dur.dimmed());
             println!(
-                "  🔊 {}%  {}x  {}  {}\n",
+                "  🔊 {}%  ·  {}x  ·  {}  {}\n",
                 info.volume,
                 info.speed,
                 info.repeat.label(),
                 if info.shuffle { "🔀" } else { "" }
             );
             if let Some(deadline) = info.sleep_deadline {
-                println!("  😴 Sleep timer: {}", deadline.format("%H:%M"));
+                println!("  😴 Sleep at {}", deadline.format("%H:%M"));
             }
         }
     }

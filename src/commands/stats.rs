@@ -29,8 +29,14 @@ pub fn cmd_stats(db: &Database, range: &str) -> Result<()> {
         None => get_all_history(db)?,
     };
 
+    let term_w = crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
+    let divider = "─".repeat(term_w.min(60));
+
+    println!("\n  {} Listening Stats ({})", "📊".bold(), range.cyan());
+    println!("  {}", divider.dimmed());
+
     if entries.is_empty() {
-        println!("\n  No listening history found for range: {}\n", range);
+        println!("  {} No listening history for this range.\n", "🎵".dimmed());
         return Ok(());
     }
 
@@ -50,19 +56,23 @@ pub fn cmd_stats(db: &Database, range: &str) -> Result<()> {
     let mut top_channels: Vec<_> = channel_time.into_iter().collect();
     top_channels.sort_by(|a, b| b.1.cmp(&a.1));
 
-    println!("\n  {} Listening Stats ({})\n", "📊".bold(), range);
-    println!("  🎵 {} tracks played", total_tracks);
-    println!("  ⏱  {} total listening time", format_duration_long(total_listened));
-    println!("  📺 {} unique channels\n", unique_channels.len());
+    println!("  🎵 {} tracks played", format!("{}", total_tracks).bold());
+    println!("  ⏱  {} total listening time", format_duration_long(total_listened).green());
+    println!("  📺 {} unique channels", format!("{}", unique_channels.len()).bold());
+    println!("  {}", divider.dimmed());
 
     if !top_channels.is_empty() {
         println!("  {} Top Channels:", "🏆".bold());
+        let max_secs = top_channels.first().map(|(_, s)| *s).unwrap_or(1);
         for (i, (ch, secs)) in top_channels.iter().take(5).enumerate() {
+            let bar_len = ((*secs as f64 / max_secs as f64) * 20.0) as usize;
+            let bar = "█".repeat(bar_len);
             println!(
-                "  {}. {} — {}",
-                i + 1,
+                "  {}. {:.<22} {} {}",
+                format!("{}", i + 1).dimmed(),
                 ch.bold(),
-                format_duration_long(*secs)
+                bar.green(),
+                format_duration_long(*secs).dimmed()
             );
         }
     }

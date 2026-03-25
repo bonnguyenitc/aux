@@ -3,7 +3,8 @@ use ratatui::{
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Cell, Gauge, List, ListItem, Paragraph, Row, Table, Tabs,
+        Block, BorderType, Borders, Cell, Paragraph, Row,
+        Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Tabs,
     },
     Frame,
 };
@@ -11,13 +12,19 @@ use ratatui::{
 use crate::youtube::types::format_duration;
 use super::app::{App, NowPlaying, Panel};
 
-// ── Color Palette (Spotify-inspired dark) ──────────────────────────────────
-const BRAND:    Color = Color::Rgb(29, 185, 84);   // Spotify green
-const ACCENT:   Color = Color::Rgb(78, 205, 196);  // Teal highlight
-const WARN:     Color = Color::Rgb(255, 200, 60);  // Amber for repeat/sleep
-const DIM:      Color = Color::Rgb(100, 100, 120);
-const TEXT:     Color = Color::White;
-const SELECTED: Color = Color::Rgb(29, 185, 84);
+// ── Color Palette (Premium dark theme) ─────────────────────────────────────
+const BRAND:     Color = Color::Rgb(30, 215, 96);    // Vibrant green
+const BRAND_DIM: Color = Color::Rgb(20, 145, 65);    // Muted green for borders
+const ACCENT:    Color = Color::Rgb(80, 210, 200);    // Teal highlight
+const WARN:      Color = Color::Rgb(255, 200, 60);    // Amber
+const DIM:       Color = Color::Rgb(75, 75, 100);     // Muted gray-blue
+const TEXT:      Color = Color::Rgb(230, 230, 245);    // Soft white
+const TEXT_DIM:  Color = Color::Rgb(130, 130, 155);    // Muted text
+const SELECTED:  Color = Color::Rgb(30, 215, 96);     // Selection = brand
+const LOVE:      Color = Color::Rgb(255, 75, 110);     // Heart pink-red
+const KEY_BG:    Color = Color::Rgb(55, 55, 75);       // Key badge background
+const SURFACE:   Color = Color::Rgb(40, 40, 58);       // Selected row background
+const ROW_ALT:   Color = Color::Rgb(28, 28, 42);       // Alternating row background
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -26,9 +33,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // Header + tabs
-            Constraint::Min(4),    // Body panel
-            Constraint::Length(4), // Now playing bar
-            Constraint::Length(2), // Keybind bar (2 lines: panel + playback)
+            Constraint::Min(3),    // Body panel
+            Constraint::Length(5), // Now playing (progress + 2-line info)
+            Constraint::Length(2), // Keybind bar
         ])
         .split(area);
 
@@ -60,7 +67,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(brand, layout[0]);
 
     // Tabs
-    let tab_titles = vec!["Search", "Results", "Lyrics", "Queue", "Favs", "History", "Playlists", "Chat", "Help"];
+    let tab_titles = vec!["🔍Search", "📋Results", "🎵Lyrics", "📦Queue", "❤Favs", "⏱History", "🎶Lists", "💬Chat", "❓Help"];
     let selected = match app.panel {
         Panel::Search => 0,
         Panel::Results => 1,
@@ -186,7 +193,7 @@ fn draw_search(frame: &mut Frame, area: Rect, app: &App) {
 // ── Results panel ─────────────────────────────────────────────────────────
 
 fn draw_results(frame: &mut Frame, area: Rect, app: &App) {
-    let items: Vec<ListItem> = app
+    let rows: Vec<Row> = app
         .search_results
         .iter()
         .enumerate()
@@ -197,28 +204,28 @@ fn draw_results(frame: &mut Frame, area: Rect, app: &App) {
                 .map(|d| format_duration(d as u64))
                 .unwrap_or_else(|| "LIVE".to_string());
             let channel = v.channel.as_deref().unwrap_or("Unknown");
-
             let selected = i == app.selected_index;
-            let style = if selected {
-                Style::default().fg(SELECTED).bold()
-            } else {
-                Style::default().fg(TEXT)
-            };
-            let prefix = if selected { "▸ " } else { "  " };
 
-            ListItem::new(vec![
-                Line::from(vec![
-                    Span::styled(prefix, style),
-                    Span::styled(format!("{}. ", global_idx), Style::default().fg(DIM)),
-                    Span::styled(&v.title, style),
-                ]),
-                Line::from(vec![
-                    Span::styled("    ", Style::default()),
-                    Span::styled(
-                        format!("{}  ·  {}", channel, duration),
-                        Style::default().fg(DIM),
-                    ),
-                ]),
+            let row_bg = if selected {
+                SURFACE
+            } else if i % 2 == 1 {
+                ROW_ALT
+            } else {
+                Color::Reset
+            };
+            let text_style = if selected {
+                Style::default().fg(SELECTED).bold().bg(row_bg)
+            } else {
+                Style::default().fg(TEXT).bg(row_bg)
+            };
+            let prefix = if selected { "▸" } else { " " };
+
+            Row::new(vec![
+                Cell::from(format!(" {}{}", prefix, global_idx))
+                    .style(Style::default().fg(if selected { BRAND } else { DIM }).bg(row_bg)),
+                Cell::from(v.title.as_str()).style(text_style),
+                Cell::from(channel).style(Style::default().fg(TEXT_DIM).bg(row_bg)),
+                Cell::from(duration).style(Style::default().fg(DIM).bg(row_bg)),
             ])
         })
         .collect();
@@ -229,15 +236,44 @@ fn draw_results(frame: &mut Frame, area: Rect, app: &App) {
         app.search_page + 1,
         app.search_total_pages(),
     );
-    let list = List::new(items).block(
-        Block::default()
-            .title(title)
-            .title_style(Style::default().fg(ACCENT).bold())
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(DIM)),
+    let block = Block::default()
+        .title(title)
+        .title_style(Style::default().fg(ACCENT).bold())
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(DIM));
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(5),
+            Constraint::Percentage(55),
+            Constraint::Percentage(30),
+            Constraint::Length(7),
+        ],
+    )
+    .block(block)
+    .header(
+        Row::new(vec![" #", "Title", "Channel", "Time"])
+            .style(Style::default().fg(DIM).add_modifier(Modifier::BOLD))
+            .bottom_margin(0),
     );
-    frame.render_widget(list, area);
+    frame.render_widget(table, area);
+
+    // Scrollbar
+    if app.search_results.len() > 1 {
+        let mut sb_state = ScrollbarState::new(app.search_results.len())
+            .position(app.selected_index);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(Some("│"))
+                .thumb_symbol("█"),
+            area.inner(ratatui::layout::Margin { vertical: 1, horizontal: 0 }),
+            &mut sb_state,
+        );
+    }
 }
 
 // ── Lyrics panel ─────────────────────────────────────────────────────────────
@@ -390,40 +426,54 @@ fn draw_queue(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let items: Vec<ListItem> = app
+    let rows: Vec<Row> = app
         .queue_items
         .iter()
         .enumerate()
         .map(|(i, e)| {
             let selected = i == app.selected_index;
-            let style = if selected {
-                Style::default().fg(SELECTED).bold()
+            let row_bg = if selected { SURFACE } else if i % 2 == 1 { ROW_ALT } else { Color::Reset };
+            let text_style = if selected {
+                Style::default().fg(SELECTED).bold().bg(row_bg)
             } else {
-                Style::default().fg(TEXT)
+                Style::default().fg(TEXT).bg(row_bg)
             };
-            let prefix = if selected { "▸ " } else { "  " };
-            let dur = e
-                .duration_secs
+            let prefix = if selected { "▸" } else { " " };
+            let dur = e.duration_secs
                 .map(|d| format_duration(d as u64))
                 .unwrap_or_else(|| "??:??".to_string());
-            ListItem::new(Line::from(vec![
-                Span::styled(prefix, style),
-                Span::styled(&e.title, style),
-                Span::styled(format!("  [{}]", dur), Style::default().fg(DIM)),
-            ]))
+            Row::new(vec![
+                Cell::from(format!(" {}{}", prefix, i + 1))
+                    .style(Style::default().fg(if selected { BRAND } else { DIM }).bg(row_bg)),
+                Cell::from(e.title.as_str()).style(text_style),
+                Cell::from(dur).style(Style::default().fg(DIM).bg(row_bg)),
+            ])
         })
         .collect();
 
     let title = format!(" Queue ({}) ", app.queue_items.len());
-    let list = List::new(items).block(
-        Block::default()
-            .title(title)
-            .title_style(Style::default().fg(ACCENT).bold())
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(DIM)),
-    );
-    frame.render_widget(list, area);
+    let block = Block::default()
+        .title(title)
+        .title_style(Style::default().fg(ACCENT).bold())
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(DIM));
+    let table = Table::new(rows, [Constraint::Length(5), Constraint::Percentage(80), Constraint::Length(7)])
+        .block(block)
+        .header(Row::new(vec![" #", "Title", "Time"]).style(Style::default().fg(DIM).add_modifier(Modifier::BOLD)));
+    frame.render_widget(table, area);
+
+    // Scrollbar
+    if app.queue_items.len() > 1 {
+        let mut sb = ScrollbarState::new(app.queue_items.len()).position(app.selected_index);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None).end_symbol(None)
+                .track_symbol(Some("│")).thumb_symbol("█"),
+            area.inner(ratatui::layout::Margin { vertical: 1, horizontal: 0 }),
+            &mut sb,
+        );
+    }
 }
 
 // ── Favorites panel ───────────────────────────────────────────────────────
@@ -440,7 +490,7 @@ fn draw_favorites(frame: &mut Frame, area: Rect, app: &App) {
         .block(
             Block::default()
                 .title(" Favorites ❤️ ")
-                .title_style(Style::default().fg(Color::Red).bold())
+                .title_style(Style::default().fg(LOVE).bold())
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(DIM)),
@@ -449,50 +499,58 @@ fn draw_favorites(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let items: Vec<ListItem> = app
+    let rows: Vec<Row> = app
         .fav_items
         .iter()
         .enumerate()
         .map(|(i, e)| {
             let selected = i == app.selected_index;
-            let style = if selected {
-                Style::default().fg(SELECTED).bold()
+            let row_bg = if selected { SURFACE } else if i % 2 == 1 { ROW_ALT } else { Color::Reset };
+            let text_style = if selected {
+                Style::default().fg(SELECTED).bold().bg(row_bg)
             } else {
-                Style::default().fg(TEXT)
+                Style::default().fg(TEXT).bg(row_bg)
             };
-            let prefix = if selected { "▸ " } else { "  " };
-            let dur = e
-                .duration_secs
+            let prefix = if selected { "▸" } else { " " };
+            let dur = e.duration_secs
                 .map(|d| format_duration(d as u64))
                 .unwrap_or_else(|| "??:??".to_string());
             let ch = e.channel.as_deref().unwrap_or("Unknown");
-            ListItem::new(vec![
-                Line::from(vec![
-                    Span::styled(prefix, style),
-                    Span::styled("❤️ ", Style::default()),
-                    Span::styled(&e.title, style),
-                ]),
-                Line::from(vec![
-                    Span::styled("    ", Style::default()),
-                    Span::styled(
-                        format!("{}  ·  {}", ch, dur),
-                        Style::default().fg(DIM),
-                    ),
-                ]),
+            Row::new(vec![
+                Cell::from(format!(" {}❤", prefix))
+                    .style(Style::default().fg(if selected { LOVE } else { LOVE }).bg(row_bg)),
+                Cell::from(e.title.as_str()).style(text_style),
+                Cell::from(ch).style(Style::default().fg(TEXT_DIM).bg(row_bg)),
+                Cell::from(dur).style(Style::default().fg(DIM).bg(row_bg)),
             ])
         })
         .collect();
 
     let title = format!(" Favorites ❤️ ({}) ", app.fav_items.len());
-    let list = List::new(items).block(
-        Block::default()
-            .title(title)
-            .title_style(Style::default().fg(Color::Red).bold())
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(DIM)),
-    );
-    frame.render_widget(list, area);
+    let block = Block::default()
+        .title(title)
+        .title_style(Style::default().fg(LOVE).bold())
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(DIM));
+    let table = Table::new(rows, [
+        Constraint::Length(4), Constraint::Percentage(50), Constraint::Percentage(30), Constraint::Length(7),
+    ])
+    .block(block)
+    .header(Row::new(vec![" ❤", "Title", "Channel", "Time"]).style(Style::default().fg(DIM).add_modifier(Modifier::BOLD)));
+    frame.render_widget(table, area);
+
+    // Scrollbar
+    if app.fav_items.len() > 1 {
+        let mut sb = ScrollbarState::new(app.fav_items.len()).position(app.selected_index);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None).end_symbol(None)
+                .track_symbol(Some("│")).thumb_symbol("█"),
+            area.inner(ratatui::layout::Margin { vertical: 1, horizontal: 0 }),
+            &mut sb,
+        );
+    }
 }
 
 // ── History panel ──────────────────────────────────────────────────────────
@@ -518,46 +576,56 @@ fn draw_history(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let items: Vec<ListItem> = app
+    let rows: Vec<Row> = app
         .history_items
         .iter()
         .enumerate()
         .map(|(i, e)| {
             let selected = i == app.selected_index;
-            let style = if selected {
-                Style::default().fg(SELECTED).bold()
+            let row_bg = if selected { SURFACE } else if i % 2 == 1 { ROW_ALT } else { Color::Reset };
+            let text_style = if selected {
+                Style::default().fg(SELECTED).bold().bg(row_bg)
             } else {
-                Style::default().fg(TEXT)
+                Style::default().fg(TEXT).bg(row_bg)
             };
-            let prefix = if selected { "▸ " } else { "  " };
+            let prefix = if selected { "▸" } else { " " };
             let ch = e.channel.as_deref().unwrap_or("Unknown");
             let when = e.played_at.split('T').next().unwrap_or(&e.played_at);
-            ListItem::new(vec![
-                Line::from(vec![
-                    Span::styled(prefix, style),
-                    Span::styled(&e.title, style),
-                ]),
-                Line::from(vec![
-                    Span::styled("    ", Style::default()),
-                    Span::styled(
-                        format!("{}  ·  {}", ch, when),
-                        Style::default().fg(DIM),
-                    ),
-                ]),
+            Row::new(vec![
+                Cell::from(format!(" {}{}", prefix, i + 1))
+                    .style(Style::default().fg(if selected { BRAND } else { DIM }).bg(row_bg)),
+                Cell::from(e.title.as_str()).style(text_style),
+                Cell::from(ch).style(Style::default().fg(TEXT_DIM).bg(row_bg)),
+                Cell::from(when).style(Style::default().fg(DIM).bg(row_bg)),
             ])
         })
         .collect();
 
     let title = format!(" History ({}) ", app.history_items.len());
-    let list = List::new(items).block(
-        Block::default()
-            .title(title)
-            .title_style(Style::default().fg(ACCENT).bold())
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(DIM)),
-    );
-    frame.render_widget(list, area);
+    let block = Block::default()
+        .title(title)
+        .title_style(Style::default().fg(ACCENT).bold())
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(DIM));
+    let table = Table::new(rows, [
+        Constraint::Length(5), Constraint::Percentage(50), Constraint::Percentage(30), Constraint::Length(10),
+    ])
+    .block(block)
+    .header(Row::new(vec![" #", "Title", "Channel", "Date"]).style(Style::default().fg(DIM).add_modifier(Modifier::BOLD)));
+    frame.render_widget(table, area);
+
+    // Scrollbar
+    if app.history_items.len() > 1 {
+        let mut sb = ScrollbarState::new(app.history_items.len()).position(app.selected_index);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None).end_symbol(None)
+                .track_symbol(Some("│")).thumb_symbol("█"),
+            area.inner(ratatui::layout::Margin { vertical: 1, horizontal: 0 }),
+            &mut sb,
+        );
+    }
 }
 
 // ── Playlists panel ─────────────────────────────────────────────────────────
@@ -876,8 +944,9 @@ fn draw_help(frame: &mut Frame, area: Rect) {
 
 fn help_row<'a>(key: &'a str, desc: &'a str) -> Line<'a> {
     Line::from(vec![
-        Span::styled(format!("  {:<18}", key), Style::default().fg(ACCENT)),
-        Span::styled(desc, Style::default().fg(TEXT)),
+        Span::styled("  ", Style::default()),
+        Span::styled(format!(" {} ", key), Style::default().fg(TEXT).bg(KEY_BG)),
+        Span::styled(format!(" {}", desc), Style::default().fg(TEXT_DIM)),
     ])
 }
 
@@ -894,10 +963,10 @@ pub fn draw_now_playing_bar(frame: &mut Frame, area: Rect, app: &App) {
 fn draw_now_playing_active(frame: &mut Frame, area: Rect, np: &NowPlaying) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(3)])
+        .constraints([Constraint::Length(1), Constraint::Length(4)])
         .split(area);
 
-    // Progress bar
+    // ── Custom Unicode progress bar ━━━━━━━●─────────────────
     let progress = if np.duration_secs > 0 {
         (np.position_secs as f64 / np.duration_secs as f64).min(1.0)
     } else {
@@ -905,114 +974,158 @@ fn draw_now_playing_active(frame: &mut Frame, area: Rect, np: &NowPlaying) {
     };
     let pos_str = format_duration(np.position_secs);
     let dur_str = format_duration(np.duration_secs);
+    let time_label = format!(" {} / {} ", pos_str, dur_str);
+    let bar_width = chunks[0].width.saturating_sub(time_label.len() as u16 + 2) as usize;
+    let fine_pos = progress * bar_width as f64;
+    let filled = fine_pos as usize;
+    let remaining = bar_width.saturating_sub(filled + 1);
+    // Half-block precision for smoother progress
+    let sub_blocks = ["─", "╿", "╸", "━"];
+    let frac = ((fine_pos - filled as f64) * sub_blocks.len() as f64) as usize;
+    let knob = sub_blocks[frac.min(sub_blocks.len() - 1)];
 
-    let gauge = Gauge::default()
-        .gauge_style(Style::default().fg(BRAND).bg(Color::Rgb(30, 30, 30)))
-        .ratio(progress)
-        .label(format!("{} / {}", pos_str, dur_str));
-    frame.render_widget(gauge, chunks[0]);
+    let progress_line = Line::from(vec![
+        Span::styled(" ", Style::default()),
+        Span::styled("━".repeat(filled), Style::default().fg(BRAND)),
+        Span::styled("●", Style::default().fg(TEXT).bold()),
+        Span::styled(knob, Style::default().fg(BRAND_DIM)),
+        Span::styled("─".repeat(remaining.saturating_sub(1)), Style::default().fg(DIM)),
+        Span::styled(time_label, Style::default().fg(TEXT_DIM)),
+    ]);
+    frame.render_widget(Paragraph::new(progress_line), chunks[0]);
 
-    // Info line
-    let status = if np.paused { "⏸" } else { "▶" };
-    let fav   = if np.is_fav  { " ❤" } else { "" };
-    let queue = if np.in_queue { " 📋" } else { "" };
+    // ── 2-line info block ──────────────────────────────────────
+    let status_icon = if np.paused { "⏸" } else { "▶" };
+    let title_max = area.width.saturating_sub(12) as usize;
+    let title: String = np.video.title.chars().take(title_max.max(20)).collect();
     let channel = np.video.channel.as_deref().unwrap_or("Unknown");
     let repeat_label = np.repeat.label();
-    let shuffle_label = if np.shuffle { " 🔀" } else { "" };
+    let shuffle_str = if np.shuffle { "  🔀" } else { "" };
+    let sleep_str = np.sleep_deadline
+        .map(|d| format!("  😴{}", d.format("%H:%M")))
+        .unwrap_or_default();
 
-    // Truncate title to fit
-    let title_max = area.width.saturating_sub(40) as usize;
-    let title: String = np
-        .video
-        .title
-        .chars()
-        .take(title_max.max(20))
-        .collect();
+    // Line 1: status + title + badges
+    let line1 = Line::from(vec![
+        Span::styled(format!("  {} ", status_icon), Style::default().fg(BRAND).bold()),
+        Span::styled(&title, Style::default().fg(TEXT).bold()),
+        if np.is_fav { Span::styled(" ❤", Style::default().fg(LOVE)) } else { Span::raw("") },
+        if np.in_queue { Span::styled(" 📋", Style::default().fg(ACCENT)) } else { Span::raw("") },
+    ]);
 
-    // Sleep timer indicator
-    let sleep_span = np.sleep_deadline.map(|d| {
+    // Line 2: channel · volume · speed · repeat · shuffle · sleep
+    let line2 = Line::from(vec![
+        Span::styled(format!("  {}", channel), Style::default().fg(TEXT_DIM)),
+        Span::styled("  ·  ", Style::default().fg(DIM)),
+        Span::styled(format!("🔊 {}%", np.volume), Style::default().fg(TEXT_DIM)),
+        Span::styled("  ·  ", Style::default().fg(DIM)),
         Span::styled(
-            format!("  😴{}", d.format("%H:%M")),
-            Style::default().fg(WARN),
-        )
-    });
-
-    let mut info_spans = vec![
-        Span::styled(format!(" {} ", status), Style::default().fg(BRAND).bold()),
-        Span::styled(title, Style::default().fg(TEXT).bold()),
-        Span::styled(fav,   Style::default().fg(Color::Red)),
-        Span::styled(queue, Style::default().fg(ACCENT)),
-        Span::styled(format!("  ·  {}", channel), Style::default().fg(DIM)),
-        Span::styled(format!("  🔊{}%", np.volume), Style::default().fg(DIM)),
-        Span::styled(
-            format!("  {}x", np.speed),
-            Style::default().fg(if (np.speed - 1.0).abs() > 0.01 { WARN } else { DIM }),
+            format!("{}x", np.speed),
+            Style::default().fg(if (np.speed - 1.0).abs() > 0.01 { WARN } else { TEXT_DIM }),
         ),
-        Span::styled(
-            format!("  {}{}", repeat_label, shuffle_label),
-            Style::default().fg(DIM),
-        ),
-    ];
-    if let Some(s) = sleep_span { info_spans.push(s); }
+        Span::styled("  ·  ", Style::default().fg(DIM)),
+        Span::styled(format!("{}{}", repeat_label, shuffle_str), Style::default().fg(TEXT_DIM)),
+        Span::styled(sleep_str, Style::default().fg(WARN)),
+    ]);
 
-    let info = Paragraph::new(Line::from(info_spans))
-    .block(
-        Block::default()
-            .borders(Borders::TOP | Borders::BOTTOM)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(DIM)),
-    );
+    let info = Paragraph::new(vec![line1, line2])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(BRAND_DIM)),
+        );
     frame.render_widget(info, chunks[1]);
 }
 
 fn draw_now_playing_empty(frame: &mut Frame, area: Rect) {
-    let empty = Paragraph::new(Line::from(vec![Span::styled(
-        "  No track playing — use duet search or duet play <url>",
-        Style::default().fg(DIM),
-    )]))
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(4)])
+        .split(area);
+
+    // Empty progress bar
+    let bar_width = chunks[0].width.saturating_sub(2) as usize;
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(" ", Style::default()),
+            Span::styled("─".repeat(bar_width), Style::default().fg(DIM)),
+        ])),
+        chunks[0],
+    );
+
+    // Empty info
+    let empty = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled("  ⏹ ", Style::default().fg(DIM)),
+            Span::styled("No track playing", Style::default().fg(TEXT_DIM)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Use ", Style::default().fg(DIM)),
+            Span::styled("duet search", Style::default().fg(ACCENT)),
+            Span::styled(" or ", Style::default().fg(DIM)),
+            Span::styled("duet play <url>", Style::default().fg(ACCENT)),
+            Span::styled(" to start", Style::default().fg(DIM)),
+        ]),
+    ])
     .block(
         Block::default()
-            .borders(Borders::TOP | Borders::BOTTOM)
+            .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(DIM)),
     );
-    frame.render_widget(empty, area);
+    frame.render_widget(empty, chunks[1]);
 }
 
 // ── Keybind bar ────────────────────────────────────────────────────────────
 
 fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
-    let panel_hint = match app.panel {
-        Panel::Search    => " Enter:search  Tab:panels  ?:help  q:quit",
-        Panel::Results   => " Enter:play  ↑↓jk:nav  ←→:page  a:queue  f:fav  Tab:panel  Esc:back",
-        Panel::Lyrics    => " ⇧↑↓:scroll  0:auto-scroll  Tab:panel  Esc:back",
-        Panel::Queue     => " Enter:play  ↑↓jk:nav  d:remove  Tab:panel",
-        Panel::Favorites => " Enter:play  ↑↓jk:nav  d:unfav  Tab:panel  Esc:back",
-        Panel::History   => " Enter:replay  ↑↓jk:nav  Tab:panel",
-        Panel::Playlists => " Enter:view/play  ↑↓jk:nav  n:new  d:del  p:play all  Esc:back  Tab:panel",
-        Panel::Chat      => " Enter:send  ↑↓:scroll  Esc:back  Tab:panel",
-        Panel::Help      => " Any key to go back",
-    };
+    // ── Line 1: status + panel-specific key badges ─────────────
+    let mut line1: Vec<Span> = Vec::new();
 
-    // Line 1: status message (if any) + panel-specific hints
-    let line1_text = app
-        .status_message
-        .as_deref()
-        .map(|s| format!(" ✦ {}  │ {}", s, panel_hint.trim()))
-        .unwrap_or_else(|| panel_hint.to_string());
-
-    let line1 = Line::from(Span::styled(line1_text, Style::default().fg(DIM)));
-
-    // Line 2: playback controls (only when playing)
-    let line2 = if app.now_playing.is_some() {
-        Line::from(Span::styled(
-            " ♪ Space:⏯  ←→:seek  +/-:vol  ]/[:spd  r:repeat  z:shuf  n:next  t:sleep  e:eq  S:stop",
-            Style::default().fg(DIM),
-        ))
+    if let Some(ref msg) = app.status_message {
+        line1.push(Span::styled(format!(" ✦ {} ", msg), Style::default().fg(WARN)));
+        line1.push(Span::styled("│ ", Style::default().fg(DIM)));
     } else {
-        Line::from(Span::styled("", Style::default().fg(DIM)))
+        line1.push(Span::styled(" ", Style::default()));
+    }
+
+    let panel_keys: Vec<(&str, &str)> = match app.panel {
+        Panel::Search    => vec![("Enter", "search"), ("Tab", "panels"), ("?", "help"), ("q", "quit")],
+        Panel::Results   => vec![("Enter", "play"), ("↑↓", "nav"), ("←→", "page"), ("a", "queue"), ("f", "fav"), ("Tab", "panel")],
+        Panel::Lyrics    => vec![("⇧↑↓", "scroll"), ("0", "auto"), ("Tab", "panel"), ("Esc", "back")],
+        Panel::Queue     => vec![("Enter", "play"), ("↑↓", "nav"), ("d", "remove"), ("Tab", "panel")],
+        Panel::Favorites => vec![("Enter", "play"), ("↑↓", "nav"), ("d", "unfav"), ("Tab", "panel")],
+        Panel::History   => vec![("Enter", "replay"), ("↑↓", "nav"), ("Tab", "panel")],
+        Panel::Playlists => vec![("Enter", "view"), ("↑↓", "nav"), ("n", "new"), ("d", "del"), ("p", "play")],
+        Panel::Chat      => vec![("Enter", "send"), ("↑↓", "scroll"), ("Esc", "back"), ("Tab", "panel")],
+        Panel::Help      => vec![("Any", "go back")],
     };
 
-    let bar = Paragraph::new(vec![line1, line2]);
+    for (key, action) in &panel_keys {
+        line1.push(Span::styled(format!(" {} ", key), Style::default().fg(TEXT).bg(KEY_BG)));
+        line1.push(Span::styled(format!(" {} ", action), Style::default().fg(TEXT_DIM)));
+    }
+
+    // ── Line 2: playback key badges ────────────────────────────
+    let line2 = if app.now_playing.is_some() {
+        let play_keys: Vec<(&str, &str)> = vec![
+            ("Space", "⏯"), ("←→", "seek"), ("+/-", "vol"),
+            ("]/[", "spd"), ("r", "repeat"), ("n", "next"),
+            ("f", "fav"), ("S", "stop"),
+        ];
+        let mut spans: Vec<Span> = vec![
+            Span::styled(" ♪ ", Style::default().fg(BRAND)),
+        ];
+        for (key, action) in &play_keys {
+            spans.push(Span::styled(format!(" {} ", key), Style::default().fg(TEXT).bg(KEY_BG)));
+            spans.push(Span::styled(format!(" {} ", action), Style::default().fg(TEXT_DIM)));
+        }
+        Line::from(spans)
+    } else {
+        Line::from(Span::raw(""))
+    };
+
+    let bar = Paragraph::new(vec![Line::from(line1), line2]);
     frame.render_widget(bar, area);
 }
