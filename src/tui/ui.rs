@@ -60,14 +60,15 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(brand, layout[0]);
 
     // Tabs
-    let tab_titles = vec!["Search", "Results", "Queue", "History", "Chat", "Help"];
+    let tab_titles = vec!["Search", "Results", "Queue", "Favs", "History", "Chat", "Help"];
     let selected = match app.panel {
         Panel::Search => 0,
         Panel::Results => 1,
         Panel::Queue => 2,
-        Panel::History => 3,
-        Panel::Chat => 4,
-        Panel::Help => 5,
+        Panel::Favorites => 3,
+        Panel::History => 4,
+        Panel::Chat => 5,
+        Panel::Help => 6,
     };
 
     let tabs = Tabs::new(tab_titles)
@@ -91,6 +92,7 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
         Panel::Search => draw_search(frame, area, app),
         Panel::Results => draw_results(frame, area, app),
         Panel::Queue => draw_queue(frame, area, app),
+        Panel::Favorites => draw_favorites(frame, area, app),
         Panel::History => draw_history(frame, area, app),
         Panel::Chat => draw_chat(frame, area, app),
         Panel::Help => draw_help(frame, area),
@@ -286,6 +288,75 @@ fn draw_queue(frame: &mut Frame, area: Rect, app: &App) {
         Block::default()
             .title(title)
             .title_style(Style::default().fg(ACCENT).bold())
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(DIM)),
+    );
+    frame.render_widget(list, area);
+}
+
+// ── Favorites panel ───────────────────────────────────────────────────────
+
+fn draw_favorites(frame: &mut Frame, area: Rect, app: &App) {
+    if app.fav_items.is_empty() {
+        let empty = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "  No favorites yet. Press [f] while playing to add tracks you love.",
+                Style::default().fg(DIM),
+            )]),
+        ])
+        .block(
+            Block::default()
+                .title(" Favorites ❤️ ")
+                .title_style(Style::default().fg(Color::Red).bold())
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(DIM)),
+        );
+        frame.render_widget(empty, area);
+        return;
+    }
+
+    let items: Vec<ListItem> = app
+        .fav_items
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let selected = i == app.selected_index;
+            let style = if selected {
+                Style::default().fg(SELECTED).bold()
+            } else {
+                Style::default().fg(TEXT)
+            };
+            let prefix = if selected { "▸ " } else { "  " };
+            let dur = e
+                .duration_secs
+                .map(|d| format_duration(d as u64))
+                .unwrap_or_else(|| "??:??".to_string());
+            let ch = e.channel.as_deref().unwrap_or("Unknown");
+            ListItem::new(vec![
+                Line::from(vec![
+                    Span::styled(prefix, style),
+                    Span::styled("❤️ ", Style::default()),
+                    Span::styled(&e.title, style),
+                ]),
+                Line::from(vec![
+                    Span::styled("    ", Style::default()),
+                    Span::styled(
+                        format!("{}  ·  {}", ch, dur),
+                        Style::default().fg(DIM),
+                    ),
+                ]),
+            ])
+        })
+        .collect();
+
+    let title = format!(" Favorites ❤️ ({}) ", app.fav_items.len());
+    let list = List::new(items).block(
+        Block::default()
+            .title(title)
+            .title_style(Style::default().fg(Color::Red).bold())
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(DIM)),
@@ -652,11 +723,12 @@ fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
 
     let panel_hint = match app.panel {
         Panel::Search  => " Enter:search  Tab:panels  ?:help  q:quit",
-        Panel::Results => " Enter:play  ↑↓jk:nav  ←→:page  a:queue  f:fav  Tab:panel  Esc:back",
-        Panel::Queue   => " Enter:play  ↑↓jk:nav  d:remove  Tab:panel",
-        Panel::History => " Enter:replay  ↑↓jk:nav  Tab:panel",
-        Panel::Chat    => " Enter:send  ↑↓:scroll  Esc:back  Tab:panel",
-        Panel::Help    => " Any key to go back",
+        Panel::Results   => " Enter:play  ↑↓jk:nav  ←→:page  a:queue  f:fav  Tab:panel  Esc:back",
+        Panel::Queue     => " Enter:play  ↑↓jk:nav  d:remove  Tab:panel",
+        Panel::Favorites => " Enter:play  ↑↓jk:nav  d:unfav  Tab:panel  Esc:back",
+        Panel::History   => " Enter:replay  ↑↓jk:nav  Tab:panel",
+        Panel::Chat      => " Enter:send  ↑↓:scroll  Esc:back  Tab:panel",
+        Panel::Help      => " Any key to go back",
     };
 
     let msg = format!("{}{}", panel_hint, playing_hint);

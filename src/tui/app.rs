@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use crate::ai::chat::ChatMessage;
+use crate::library::favorites::FavoriteEntry;
 use crate::player::types::RepeatMode;
 use crate::youtube::VideoInfo;
 
@@ -9,6 +10,7 @@ pub enum Panel {
     Search,
     Results,
     Queue,
+    Favorites,
     History,
     Chat,
     Help,
@@ -71,6 +73,8 @@ pub struct App {
     pub chat_scroll: u16,
     /// Whether we are waiting for an AI response
     pub chat_loading: bool,
+    // ── Favorites state ──────────────────────────────────────────
+    pub fav_items: Vec<FavoriteEntry>,
 }
 
 impl App {
@@ -96,6 +100,7 @@ impl App {
             chat_messages: Vec::new(),
             chat_scroll: 0,
             chat_loading: false,
+            fav_items: Vec::new(),
         }
     }
 
@@ -166,6 +171,7 @@ impl App {
         let max = match self.panel {
             Panel::Results => self.search_results.len(),
             Panel::Queue => self.queue_items.len(),
+            Panel::Favorites => self.fav_items.len(),
             Panel::History => self.history_items.len(),
             _ => 0,
         };

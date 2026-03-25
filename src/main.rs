@@ -961,17 +961,21 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                 // Universal: Tab switches panels
                 if code == KeyCode::Tab {
                     let next = match app.panel {
-                        Panel::Search   => Panel::Results,
-                        Panel::Results  => Panel::Queue,
-                        Panel::Queue    => Panel::History,
-                        Panel::History  => Panel::Chat,
-                        Panel::Chat     => Panel::Help,
-                        Panel::Help     => Panel::Search,
+                        Panel::Search     => Panel::Results,
+                        Panel::Results    => Panel::Queue,
+                        Panel::Queue      => Panel::Favorites,
+                        Panel::Favorites  => Panel::History,
+                        Panel::History    => Panel::Chat,
+                        Panel::Chat       => Panel::Help,
+                        Panel::Help       => Panel::Search,
                     };
                     // Preload data for panels that need it
                     match next {
                         Panel::Queue => {
                             app.queue_items = library::queue::get_queue(db).unwrap_or_default();
+                        }
+                        Panel::Favorites => {
+                            app.fav_items = library::favorites::get_favorites(db).unwrap_or_default();
                         }
                         Panel::History => {
                             app.history_items = library::history::get_history(db, 50).unwrap_or_default();
@@ -1132,6 +1136,29 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                     Err(e) => app.set_status(format!("Queue error: {}", e)),
                                 }
                             }
+                            handled = true;
+                        }
+                        KeyCode::Char('f') => {
+                            if let Some(video) = app.search_results.get(app.selected_index) {
+                                let vid = video.id.clone();
+                                let vtitle = video.title.clone();
+                                let is_fav = library::favorites::is_favorite(db, &vid)
+                                    .unwrap_or(false);
+                                if is_fav {
+                                    library::favorites::remove_favorite(db, &vid).ok();
+                                    app.set_status(format!("💔 Removed: {}", vtitle));
+                                } else {
+                                    library::favorites::add_favorite(db, video).ok();
+                                    app.set_status(format!("❤️ Favorited: {}", vtitle));
+                                }
+                                // Also sync NowPlaying if same video
+                                if let Some(ref mut np) = app.now_playing {
+                                    if np.video.id == vid {
+                                        np.is_fav = !is_fav;
+                                    }
+                                }
+                            }
+                            handled = true;
                         }
                         KeyCode::Char('/') => {
                             app.set_panel(Panel::Search);
@@ -1251,6 +1278,106 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                     }
                                     Ok(false) => {
                                         app.set_status("Item not found in queue");
+                                    }
+                                    Err(e) => {
+                                        app.set_status(format!("Remove failed: {}", e));
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    },
+
+                    Panel::Favorites => match code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            app.set_panel(Panel::Search);
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => { app.select_prev(); }
+                        KeyCode::Down | KeyCode::Char('j') => { app.select_next(); }
+                        KeyCode::Enter => {
+                            if let Some(entry) = app.fav_items.get(app.selected_index).cloned() {
+                                app.set_status(format!("Loading: {}...", entry.title));
+                                terminal.draw(|f| ui::draw(f, &app))?;
+                                match yt.get_stream_url(&entry.url).await {
+                                    Ok(stream) => {
+                                        if let Some(mut old) = player.take() { old.stop().await.ok(); }
+                                        let mut p = MpvPlayer::new();
+                                        if p.play(&stream.audio_url, &entry.title).await.is_ok() {
+                                            let is_fav = true; // it's a favorite!
+                                            let in_queue =
+                                                library::queue::is_in_queue(db, &entry.video_id)
+                                                    .unwrap_or(false);
+
+                                            let video = crate::youtube::VideoInfo {
+                                                id: entry.video_id.clone(),
+                                                title: entry.title.clone(),
+                                                channel: entry.channel.clone(),
+                                                duration: entry.duration_secs.map(|s| s as f64),
+                                                view_count: None,
+                                                thumbnail: None,
+                                                url: entry.url.clone(),
+                                                description: None,
+                                            };
+
+                                            let state = crate::player::state::StateFile::new(
+                                                video.clone(), false,
+                                            );
+                                            state.write().ok();
+
+                                            app.now_playing = Some(NowPlaying {
+                                                video: video.clone(),
+                                                position_secs: 0,
+                                                duration_secs: entry.duration_secs.unwrap_or(0) as u64,
+                                                paused: false,
+                                                volume: 80,
+                                                speed: 1.0,
+                                                repeat: crate::player::RepeatMode::Off,
+                                                shuffle: false,
+                                                is_fav,
+                                                in_queue,
+                                                sleep_deadline: None,
+                                            });
+                                            player = Some(p);
+                                            // Fetch transcript for AI chat context
+                                            app.set_status(format!("Playing: {} — loading transcript…", entry.title));
+                                            terminal.draw(|f| ui::draw(f, &app))?;
+                                            let transcript = fetch_transcript(&entry.url).await.unwrap_or(None);
+                                            ai_context = Some(VideoContext::new(video, transcript));
+                                            app.chat_messages.clear();
+                                            app.chat_scroll = 0;
+                                            app.set_status(format!("Playing: {}", entry.title));
+                                        }
+                                    }
+                                    Err(e) => { app.set_status(format!("Failed: {}", e)); }
+                                }
+                            }
+                        }
+                        KeyCode::Char('d') => {
+                            let vid = app.fav_items
+                                .get(app.selected_index)
+                                .map(|e| e.video_id.clone());
+                            if let Some(video_id) = vid {
+                                match library::favorites::remove_favorite(db, &video_id) {
+                                    Ok(true) => {
+                                        app.fav_items = library::favorites::get_favorites(db)
+                                            .unwrap_or_default();
+                                        if app.selected_index >= app.fav_items.len()
+                                            && !app.fav_items.is_empty()
+                                        {
+                                            app.selected_index = app.fav_items.len() - 1;
+                                        } else if app.fav_items.is_empty() {
+                                            app.selected_index = 0;
+                                        }
+                                        app.set_status("Removed from favorites 💔");
+                                        // Sync player if same video
+                                        if let Some(ref mut np) = app.now_playing {
+                                            if np.video.id == video_id {
+                                                np.is_fav = false;
+                                            }
+                                        }
+                                    }
+                                    Ok(false) => {
+                                        app.set_status("Not found in favorites");
                                     }
                                     Err(e) => {
                                         app.set_status(format!("Remove failed: {}", e));
@@ -1528,6 +1655,10 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                     library::favorites::add_favorite(db, &np.video).ok();
                                     np.is_fav = true;
                                     app.set_status("Added to favorites ❤️");
+                                }
+                                // Reload favorites list if visible
+                                if app.panel == Panel::Favorites {
+                                    app.fav_items = library::favorites::get_favorites(db).unwrap_or_default();
                                 }
                             }
                         }
