@@ -975,6 +975,8 @@ async fn run_tui(_config: &Config, db: &Database) -> Result<()> {
                     continue;
                 }
 
+                let mut handled = false;
+
                 match app.panel {
                     Panel::Search => match code {
                         KeyCode::Esc => {
@@ -989,9 +991,11 @@ async fn run_tui(_config: &Config, db: &Database) -> Result<()> {
                         // ── History navigation ──────────────────────────────
                         KeyCode::Up => {
                             app.search_history_up();
+                            handled = true; // don't let global volume handle ↑
                         }
                         KeyCode::Down => {
                             app.search_history_down();
+                            handled = true;
                         }
                         // ── Execute search ──────────────────────────────────
                         KeyCode::Enter => {
@@ -1033,6 +1037,9 @@ async fn run_tui(_config: &Config, db: &Database) -> Result<()> {
                         KeyCode::Char(c) => {
                             app.cancel_search_history_nav();
                             app.search_input.push(c);
+                            // All printable chars consumed by search — don't leak
+                            // to global player controls (e.g. space = pause)
+                            handled = true;
                         }
                         _ => {}
                     },
@@ -1287,7 +1294,8 @@ async fn run_tui(_config: &Config, db: &Database) -> Result<()> {
                 }
 
                 // Player controls available from any panel when playing
-                if player.is_some() {
+                // (skip if the panel already consumed this key, e.g. typing in Search)
+                if !handled && player.is_some() {
                     match (code, modifiers) {
                         // Pause / resume
                         (KeyCode::Char(' '), _) => {
