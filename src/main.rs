@@ -184,95 +184,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-// ─── Search & Play ───────────────────────────────────────────
 
-async fn cmd_search(query: &str, limit: usize, config: &Config, db: &Database) -> Result<()> {
-    let mut current_query = query.to_string();
-    let limit = if limit > 0 {
-        limit
-    } else {
-        config.player.search_results
-    };
-
-    loop {
-        println!("\n  {} {}\n", "🔍 Searching:".bold(), current_query);
-
-        let yt = YtDlp::new();
-        let results = yt.search(&current_query, limit).await?;
-        // Persist to search history
-        library::search_history::add_search(db, &current_query).ok();
-
-        // Pre-fetch which videos are already in favorites / queue
-        // so we can show badges inline in the selection list.
-        let fav_ids: std::collections::HashSet<String> = library::favorites::get_favorites(db)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|e| e.video_id)
-            .collect();
-        let queue_ids: std::collections::HashSet<String> = library::queue::get_queue(db)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|e| e.video_id)
-            .collect();
-
-        let items: Vec<String> = results
-            .iter()
-            .enumerate()
-            .map(|(i, v)| {
-                let duration = v
-                    .duration
-                    .map(|d| youtube::types::format_duration(d as u64))
-                    .unwrap_or_else(|| "LIVE".to_string());
-                let channel = v.channel.as_deref().unwrap_or("Unknown");
-                // Badges: ❤️ = in favorites, 📋 = in queue
-                let fav   = if fav_ids.contains(&v.id)   { "❤️ " } else { "" };
-                let queue = if queue_ids.contains(&v.id)  { "📋" } else { "" };
-                format!("{}. {}{}{} — {} [{}]", i + 1, fav, queue, v.title, channel, duration)
-            })
-            .collect();
-
-        // ── Custom selector: full alternate-screen, never scrolls ──────────
-        let selection = select_video(&items, &current_query)?;
-
-        match selection {
-            Some(idx) => {
-                let video = &results[idx];
-                match play_video(video, config, db).await? {
-                    Some(new_query) => {
-                        current_query = new_query;
-                        continue;
-                    }
-                    None => break,
-                }
-            }
-            None => {
-                println!("  {}", "Cancelled.".dimmed());
-                break;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn cmd_play(url: &str, config: &Config, db: &Database) -> Result<()> {
-    let yt = YtDlp::new();
-
-    println!("\n  {} {}\n", "🔍 Fetching:".bold(), url);
-
-    let video = if youtube::is_youtube_url(url) {
-        // Direct URL or video ID — fetch metadata without going through ytsearch:
-        yt.fetch_info(url).await?
-    } else {
-        // Keyword query — use search
-        let results = yt.search(url, 1).await?;
-        results.into_iter().next().ok_or_else(|| anyhow::anyhow!("No results for: {}", url))?
-    };
-
-    play_video(&video, config, db).await?;
-
-    Ok(())
-}
 
 /// Returns Some(new_query) if user wants to search again, None if user quit
 async fn play_video(
@@ -526,14 +438,153 @@ fn read_chat_input() -> anyhow::Result<Option<String>> {
     Ok(result)
 }
 
+
+async fn cmd_search(query: &str, limit: usize, config: &Config, db: &Database) -> Result<()> {
+    use colored::Colorize;
+    use std::collections::HashSet;
+
+    let mut current_query = query.to_string();
+    let page_size = if limit > 0 {
+        limit
+    } else {
+        config.player.search_results
+    };
+
+    loop {
+        println!("\n  {} {}\n", "🔍 Searching:".bold(), current_query);
+
+        let yt = YtDlp::new();
+        // Fetch a larger batch for local pagination (up to 5 pages)
+        let max_fetch = page_size * 5;
+        let all_results = yt.search(&current_query, max_fetch).await?;
+        // Persist to search history
+        library::search_history::add_search(db, &current_query).ok();
+
+        // Pre-fetch which videos are already in favorites / queue
+        let fav_ids: HashSet<String> = library::favorites::get_favorites(db)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| e.video_id)
+            .collect();
+        let queue_ids: HashSet<String> = library::queue::get_queue(db)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| e.video_id)
+            .collect();
+
+        let total = all_results.len();
+        let total_pages = (total + page_size - 1) / page_size; // ceil division
+        let mut current_page: usize = 0;
+
+        let action = loop {
+            let start = current_page * page_size;
+            let end = (start + page_size).min(total);
+            let page_results = &all_results[start..end];
+
+            let items: Vec<String> = page_results
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    let global_idx = start + i + 1;
+                    let duration = v
+                        .duration
+                        .map(|d| youtube::types::format_duration(d as u64))
+                        .unwrap_or_else(|| "LIVE".to_string());
+                    let channel = v.channel.as_deref().unwrap_or("Unknown");
+                    let fav   = if fav_ids.contains(&v.id)   { "❤️ " } else { "" };
+                    let queue = if queue_ids.contains(&v.id)  { "📋" } else { "" };
+                    format!("{}. {}{}{} — {} [{}]", global_idx, fav, queue, v.title, channel, duration)
+                })
+                .collect();
+
+            let page_info = PageInfo {
+                current: current_page,
+                total: total_pages,
+            };
+
+            match select_video(&items, &current_query, &page_info)? {
+                SelectAction::Selected(idx) => {
+                    break SelectAction::Selected(start + idx);
+                }
+                SelectAction::Cancelled => {
+                    break SelectAction::Cancelled;
+                }
+                SelectAction::NextPage => {
+                    if current_page + 1 < total_pages {
+                        current_page += 1;
+                    }
+                }
+                SelectAction::PrevPage => {
+                    if current_page > 0 {
+                        current_page -= 1;
+                    }
+                }
+            }
+        };
+
+        match action {
+            SelectAction::Selected(idx) => {
+                let video = &all_results[idx];
+                match play_video(video, config, db).await? {
+                    Some(new_query) => {
+                        current_query = new_query;
+                        continue;
+                    }
+                    None => break,
+                }
+            }
+            SelectAction::Cancelled => {
+                println!("  {}", "Cancelled.".dimmed());
+                break;
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    Ok(())
+}
+
+async fn cmd_play(url: &str, config: &Config, db: &Database) -> Result<()> {
+    use colored::Colorize;
+
+    let yt = YtDlp::new();
+
+    println!("\n  {} {}\n", "🔍 Fetching:".bold(), url);
+
+    let video = if youtube::is_youtube_url(url) {
+        // Direct URL or video ID — fetch metadata without going through ytsearch:
+        yt.fetch_info(url).await?
+    } else {
+        // Keyword query — use search
+        let results = yt.search(url, 1).await?;
+        results.into_iter().next().ok_or_else(|| anyhow::anyhow!("No results for: {}", url))?
+    };
+
+    play_video(&video, config, db).await?;
+
+    Ok(())
+}
+
 // ─── Video Selector ───────────────────────────────────────────
 //
 // Custom full-screen selector using crossterm raw mode.
-// Replaces dialoguer::Select which causes terminal scroll on ↑/↓.
-// Strategy: enter alternate screen buffer → redraw whole screen on key →
-// leave alternate screen (restores scroll history intact).
+// Supports pagination via [←/→] keys.
 
-fn select_video(items: &[String], query: &str) -> Result<Option<usize>> {
+/// Result of the video selector interaction
+enum SelectAction {
+    Selected(usize),
+    Cancelled,
+    NextPage,
+    PrevPage,
+}
+
+/// Pagination context passed to the selector
+struct PageInfo {
+    current: usize,
+    total: usize,
+}
+
+fn select_video(items: &[String], query: &str, page: &PageInfo) -> Result<SelectAction> {
     use crossterm::{
         cursor::{Hide, MoveTo, Show},
         event::{self, Event, KeyCode, KeyModifiers},
@@ -548,11 +599,13 @@ fn select_video(items: &[String], query: &str) -> Result<Option<usize>> {
     };
 
     if items.is_empty() {
-        return Ok(None);
+        return Ok(SelectAction::Cancelled);
     }
 
     let mut selected: usize = 0;
     let n = items.len();
+    let has_prev = page.current > 0;
+    let has_next = page.current + 1 < page.total;
 
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, Hide)?;
@@ -580,7 +633,13 @@ fn select_video(items: &[String], query: &str) -> Result<Option<usize>> {
         // Header (3 lines)
         queue!(
             io::stdout(),
-            Print(format!("\r\n  🔍 Results for: {}\r\n  {}\r\n", query, divider)),
+            Print(format!(
+                "\r\n  🔍 Results for: {}  (page {}/{})\r\n  {}\r\n",
+                query,
+                page.current + 1,
+                page.total,
+                divider,
+            )),
         )?;
 
         // Items
@@ -605,7 +664,19 @@ fn select_video(items: &[String], query: &str) -> Result<Option<usize>> {
             }
         }
 
-        // Footer (3 lines)
+        // Footer — build navigation hints dynamically
+        let mut nav_parts = vec![
+            format!("{} navigate", "[↑↓]"),
+            format!("{} select", "[Enter]"),
+        ];
+        if has_prev {
+            nav_parts.push(format!("{} prev page", "[←]"));
+        }
+        if has_next {
+            nav_parts.push(format!("{} next page", "[→]"));
+        }
+        nav_parts.push(format!("{} cancel", "[Esc/q]"));
+
         let counter = if n > visible {
             format!("  ({}/{})", selected + 1, n)
         } else {
@@ -615,8 +686,9 @@ fn select_video(items: &[String], query: &str) -> Result<Option<usize>> {
             io::stdout(),
             Print(format!("\r\n  {}\r\n", divider)),
             Print(format!(
-                "  {} navigate   {} select   {} cancel{}\r\n",
-                "[↑↓]", "[Enter]", "[Esc/q]", counter,
+                "  {}{}\r\n",
+                nav_parts.join("   "),
+                counter,
             )),
         )?;
 
@@ -635,10 +707,13 @@ fn select_video(items: &[String], query: &str) -> Result<Option<usize>> {
                         selected += 1;
                     }
                 }
-                (KeyCode::Enter, _) => break Some(selected),
+                (KeyCode::Enter, _) => break SelectAction::Selected(selected),
+                // Page navigation
+                (KeyCode::Right, _) if has_next => break SelectAction::NextPage,
+                (KeyCode::Left, _) if has_prev => break SelectAction::PrevPage,
                 (KeyCode::Esc, _)
                 | (KeyCode::Char('q'), _)
-                | (KeyCode::Char('c'), KeyModifiers::CONTROL) => break None,
+                | (KeyCode::Char('c'), KeyModifiers::CONTROL) => break SelectAction::Cancelled,
                 _ => {}
             }
         }
@@ -926,7 +1001,9 @@ async fn run_tui(_config: &Config, db: &Database) -> Result<()> {
                                 app.set_status("Searching...");
                                 terminal.draw(|f| ui::draw(f, &app))?;
 
-                                match yt.search(&query, 10).await {
+                                // Fetch larger batch for local pagination
+                                let fetch_count = app.search_page_size * 5;
+                                match yt.search(&query, fetch_count).await {
                                     Ok(results) => {
                                         // Persist to search history
                                         library::search_history::add_search(db, &query).ok();
@@ -934,11 +1011,13 @@ async fn run_tui(_config: &Config, db: &Database) -> Result<()> {
                                             library::search_history::get_searches(db, 100)
                                                 .unwrap_or_default();
 
-                                        app.search_results = results;
+                                        let total = results.len();
+                                        app.set_search_results(results);
                                         app.set_panel(Panel::Results);
                                         app.set_status(format!(
-                                            "Found {} results",
-                                            app.search_results.len()
+                                            "Found {} results (page 1/{})",
+                                            total,
+                                            app.search_total_pages()
                                         ));
                                     }
                                     Err(e) => {
@@ -1036,6 +1115,27 @@ async fn run_tui(_config: &Config, db: &Database) -> Result<()> {
                         KeyCode::Char('/') => {
                             app.set_panel(Panel::Search);
                             app.search_input.clear();
+                        }
+                        // ── Page navigation ──────────────────────────────
+                        KeyCode::Right => {
+                            if app.search_page + 1 < app.search_total_pages() {
+                                app.search_next_page();
+                                app.set_status(format!(
+                                    "Page {}/{}",
+                                    app.search_page + 1,
+                                    app.search_total_pages()
+                                ));
+                            }
+                        }
+                        KeyCode::Left => {
+                            if app.search_page > 0 {
+                                app.search_prev_page();
+                                app.set_status(format!(
+                                    "Page {}/{}",
+                                    app.search_page + 1,
+                                    app.search_total_pages()
+                                ));
+                            }
                         }
                         _ => {}
                     },

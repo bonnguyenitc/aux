@@ -37,7 +37,14 @@ pub struct NowPlaying {
 pub struct App {
     pub panel: Panel,
     pub search_input: String,
+    /// Full cached search results from yt-dlp (all pages)
+    pub all_search_results: Vec<VideoInfo>,
+    /// Current page slice — computed from `all_search_results`
     pub search_results: Vec<VideoInfo>,
+    /// Current page index (0-based)
+    pub search_page: usize,
+    /// Items per page
+    pub search_page_size: usize,
     pub selected_index: usize,
     pub now_playing: Option<NowPlaying>,
     pub status_message: Option<String>,
@@ -61,7 +68,10 @@ impl App {
             panel: Panel::Search,
             mode: Panel::Search,
             search_input: String::new(),
+            all_search_results: Vec::new(),
             search_results: Vec::new(),
+            search_page: 0,
+            search_page_size: 5,
             selected_index: 0,
             now_playing: None,
             status_message: None,
@@ -144,6 +154,51 @@ impl App {
         if self.selected_index > 0 {
             self.selected_index -= 1;
         }
+    }
+
+    // ── Pagination helpers ────────────────────────────────────────────
+
+    /// Total number of search result pages
+    pub fn search_total_pages(&self) -> usize {
+        let total = self.all_search_results.len();
+        if total == 0 { return 1; }
+        (total + self.search_page_size - 1) / self.search_page_size
+    }
+
+    /// Set search results from a yt-dlp batch and show the first page
+    pub fn set_search_results(&mut self, results: Vec<VideoInfo>) {
+        self.all_search_results = results;
+        self.search_page = 0;
+        self.refresh_search_page();
+    }
+
+    /// Advance to the next page of search results
+    pub fn search_next_page(&mut self) {
+        if self.search_page + 1 < self.search_total_pages() {
+            self.search_page += 1;
+            self.refresh_search_page();
+        }
+    }
+
+    /// Go to the previous page of search results
+    pub fn search_prev_page(&mut self) {
+        if self.search_page > 0 {
+            self.search_page -= 1;
+            self.refresh_search_page();
+        }
+    }
+
+    /// Recompute `search_results` from the current page of `all_search_results`
+    fn refresh_search_page(&mut self) {
+        let start = self.search_page * self.search_page_size;
+        let end = (start + self.search_page_size).min(self.all_search_results.len());
+        self.search_results = self.all_search_results[start..end].to_vec();
+        self.selected_index = 0;
+    }
+
+    /// Convert a page-local index to a global index into `all_search_results`
+    pub fn search_global_index(&self, local_idx: usize) -> usize {
+        self.search_page * self.search_page_size + local_idx
     }
 
     pub fn update_playback(

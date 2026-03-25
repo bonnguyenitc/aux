@@ -183,6 +183,7 @@ fn draw_results(frame: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, v)| {
+            let global_idx = app.search_global_index(i) + 1;
             let duration = v
                 .duration
                 .map(|d| format_duration(d as u64))
@@ -200,6 +201,7 @@ fn draw_results(frame: &mut Frame, area: Rect, app: &App) {
             ListItem::new(vec![
                 Line::from(vec![
                     Span::styled(prefix, style),
+                    Span::styled(format!("{}. ", global_idx), Style::default().fg(DIM)),
                     Span::styled(&v.title, style),
                 ]),
                 Line::from(vec![
@@ -213,7 +215,12 @@ fn draw_results(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    let title = format!(" Search Results ({}) ", app.search_results.len());
+    let title = format!(
+        " Results ({})  ·  page {}/{} ",
+        app.all_search_results.len(),
+        app.search_page + 1,
+        app.search_total_pages(),
+    );
     let list = List::new(items).block(
         Block::default()
             .title(title)
@@ -363,6 +370,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         help_row("Enter", "Play selected / confirm"),
         help_row("Tab", "Cycle panels (Search → Results → Queue → History → Help)"),
         help_row("↑ ↓ / j k", "Navigate list"),
+        help_row("← / →", "Page prev / next  (Results panel)"),
         help_row("Esc / q", "Back / Quit"),
         Line::from(""),
         Line::from(vec![Span::styled(
@@ -517,7 +525,7 @@ fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
 
     let panel_hint = match app.panel {
         Panel::Search  => " Enter:search  Tab:panels  ?:help  q:quit",
-        Panel::Results => " Enter:play  ↑↓jk:nav  a:queue  f:fav  Tab:panel  Esc:back",
+        Panel::Results => " Enter:play  ↑↓jk:nav  ←→:page  a:queue  f:fav  Tab:panel  Esc:back",
         Panel::Queue   => " Enter:play  ↑↓jk:nav  d:remove  Tab:panel",
         Panel::History => " Enter:replay  ↑↓jk:nav  Tab:panel",
         Panel::Help    => " Any key to go back",
