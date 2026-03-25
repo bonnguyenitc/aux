@@ -226,6 +226,14 @@ impl MediaPlayer for MpvPlayer {
     }
 }
 
+impl MpvPlayer {
+    /// Set mpv loop-file property: true = "inf" (loop forever), false = "no"
+    pub async fn set_loop_file(&self, enabled: bool) -> Result<()> {
+        let val = if enabled { "inf" } else { "no" };
+        self.set_property("loop-file", &serde_json::json!(val)).await
+    }
+}
+
 impl Drop for MpvPlayer {
     fn drop(&mut self) {
         self.cleanup_socket();

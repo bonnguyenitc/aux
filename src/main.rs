@@ -1670,6 +1670,10 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 state.repeat = state.repeat.cycle();
                                 let label = state.repeat.label().to_string();
                                 state.write().ok();
+                                // Tell mpv to loop (RepeatOne = loop-file inf)
+                                if let Some(ref p) = player {
+                                    p.set_loop_file(state.repeat == crate::player::RepeatMode::One).await.ok();
+                                }
                                 app.set_status(format!("Repeat: {}", label));
                             }
                         }

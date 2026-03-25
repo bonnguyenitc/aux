@@ -235,8 +235,9 @@ async fn interactive_loop(
 
                     // ── Repeat cycle ───────────────────────────────────
                     (KeyCode::Char('r'), _) => {
-                        state.cycle_repeat();
-                        // Icon updates on next status bar tick automatically
+                        let mode = state.cycle_repeat();
+                        // Tell mpv to actually loop (RepeatOne = loop-file inf)
+                        player.set_loop_file(mode == RepeatMode::One).await.ok();
                     }
 
                     // ── Shuffle ────────────────────────────────────────
