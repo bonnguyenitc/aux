@@ -1172,7 +1172,7 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
     use std::time::Duration;
 
     // Setup terminal
-    use tui::app::{App, NowPlaying, Panel};
+    use tui::app::{App, Panel};
     use tui::ui;
 
     // Setup terminal
@@ -1193,11 +1193,106 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
     // Pre-load saved playback positions for UX indicators
     app.saved_positions = library::playback_position::get_all_positions(db).unwrap_or_default();
 
+    // Background task handles for non-blocking I/O
+    let mut pending_transcript: Option<tokio::task::JoinHandle<Option<crate::ai::transcript::Transcript>>> = None;
+    let mut pending_transcript_video: Option<crate::youtube::VideoInfo> = None;
+    let mut pending_search: Option<(tokio::task::JoinHandle<anyhow::Result<Vec<crate::youtube::VideoInfo>>>, String)> = None;
+    let mut pending_stream: Option<(
+        tokio::task::JoinHandle<anyhow::Result<crate::youtube::types::StreamUrl>>,
+        crate::youtube::VideoInfo,
+        bool, // is_fav
+        bool, // in_queue
+    )> = None;
+
     loop {
         // Draw
         terminal.draw(|frame| {
             ui::draw(frame, &app);
         })?;
+
+        // ── Poll background tasks ──────────────────────────────────────────
+        // Transcript completion
+        if let Some(ref handle) = pending_transcript {
+            if handle.is_finished() {
+                let handle = pending_transcript.take().unwrap();
+                let transcript = handle.await.ok().flatten();
+                app.transcript = transcript.clone();
+                app.lyrics_scroll = 0;
+                app.lyrics_auto_scroll = true;
+                if let Some(video) = pending_transcript_video.take() {
+                    ai_context = Some(VideoContext::new(video, transcript));
+                    app.chat_messages.clear();
+                    app.chat_scroll = 0;
+                }
+            }
+        }
+
+        // Search completion
+        if let Some((ref handle, _)) = pending_search {
+            if handle.is_finished() {
+                let (handle, query) = pending_search.take().unwrap();
+                match handle.await {
+                    Ok(Ok(results)) => {
+                        library::search_history::add_search(db, &query).ok();
+                        app.search_history = library::search_history::get_searches(db, 100).unwrap_or_default();
+                        let total = results.len();
+                        app.set_search_results(results);
+                        app.set_panel(Panel::Results);
+                        app.set_status(format!("Found {} results (page 1/{})", total, app.search_total_pages()));
+                    }
+                    Ok(Err(e)) => app.set_status(format!("Search failed: {}", e)),
+                    Err(e) => app.set_status(format!("Search failed: {}", e)),
+                }
+            }
+        }
+
+        // Stream URL completion (deferred play)
+        if let Some((ref handle, _, _, _)) = pending_stream {
+            if handle.is_finished() {
+                let (handle, video, is_fav, in_queue) = pending_stream.take().unwrap();
+                match handle.await {
+                    Ok(Ok(stream)) => {
+                        if let Some(mut old) = player.take() { old.stop().await.ok(); }
+                        let mut p = MpvPlayer::new();
+                        if p.play(&stream.audio_url, &video.title).await.is_ok() {
+                            let state = crate::player::state::StateFile::new(video.clone(), false);
+                            state.write().ok();
+                            app.now_playing = Some(tui::app::NowPlaying {
+                                video: video.clone(),
+                                position_secs: 0,
+                                duration_secs: video.duration.map(|d| d as u64).unwrap_or(0),
+                                paused: false,
+                                volume: 80,
+                                speed: 1.0,
+                                repeat: crate::player::RepeatMode::Off,
+                                shuffle: false,
+                                is_fav,
+                                in_queue,
+                                sleep_deadline: None,
+                            });
+                            library::history::add_to_history(db, &video, 0).ok();
+                            player = Some(p);
+                            // Defer resume seek
+                            if let Ok(Some(saved_pos)) = library::playback_position::get_position(db, &video.id) {
+                                app.pending_resume_seek = Some(saved_pos);
+                                if let Some(ref pl) = player { pl.pause().await.ok(); }
+                            }
+                            // Spawn transcript fetch in background
+                            let url_owned = video.url.clone();
+                            pending_transcript = Some(tokio::spawn(async move {
+                                crate::ai::transcript::fetch_transcript(&url_owned).await.unwrap_or(None)
+                            }));
+                            pending_transcript_video = Some(video.clone());
+                            app.set_status(format!("Playing: {}", video.title));
+                        } else {
+                            app.set_status(format!("Failed to play: {}", video.title));
+                        }
+                    }
+                    Ok(Err(e)) => app.set_status(format!("Failed to load: {}", e)),
+                    Err(e) => app.set_status(format!("Failed to load: {}", e)),
+                }
+            }
+        }
 
         // Update playback info from mpv
         if let Some(ref p) = player {
@@ -1301,55 +1396,25 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
 
                 if let Some(entry) = next_entry {
                     app.set_status(format!("⏭ Next: {}...", entry.title));
-                    terminal.draw(|f| ui::draw(f, &app))?;
-                    match yt.get_stream_url(&entry.url).await {
-                        Ok(stream) => {
-                            if let Some(ref p) = player {
-                                p.load(&stream.audio_url).await.ok();
-                            }
-                            let is_fav = library::favorites::is_favorite(db, &entry.video_id).unwrap_or(false);
-                            let in_queue = library::queue::is_in_queue(db, &entry.video_id).unwrap_or(false);
-                            app.now_playing = Some(tui::app::NowPlaying {
-                                video: crate::youtube::VideoInfo {
-                                    id: entry.video_id.clone(),
-                                    title: entry.title.clone(),
-                                    channel: entry.channel.clone(),
-                                    url: entry.url.clone(),
-                                    duration: entry.duration_secs.map(|d| d as f64),
-                                    view_count: None,
-                                    thumbnail: None,
-                                    description: None,
-                                },
-                                position_secs: 0,
-                                duration_secs: entry.duration_secs.map(|d| d as u64).unwrap_or(0),
-                                paused: false,
-                                volume: vol,
-                                speed: app.now_playing.as_ref().map(|np| np.speed).unwrap_or(1.0),
-                                repeat: repeat_mode,
-                                shuffle: app.now_playing.as_ref().map(|np| np.shuffle).unwrap_or(false),
-                                is_fav,
-                                in_queue,
-                                sleep_deadline: None,
-                            });
-                            // Fetch transcript
-                            let transcript = fetch_transcript(&entry.url).await.unwrap_or(None);
-                            app.transcript = transcript.clone();
-                            app.lyrics_scroll = 0;
-                            app.lyrics_auto_scroll = true;
-                            let vi = app.now_playing.as_ref().unwrap().video.clone();
-                            ai_context = Some(VideoContext::new(vi, transcript));
-                            app.chat_messages.clear();
-                            app.chat_scroll = 0;
-                            // Reload queue list
-                            app.queue_items = library::queue::get_queue(db).unwrap_or_default();
-                            // Record history
-                            library::history::add_to_history(db, &app.now_playing.as_ref().unwrap().video, 0).ok();
-                            app.set_status(format!("▶ Playing: {}", entry.title));
-                        }
-                        Err(e) => {
-                            app.set_status(format!("Failed: {}", e));
-                        }
-                    }
+                    let is_fav = library::favorites::is_favorite(db, &entry.video_id).unwrap_or(false);
+                    let in_queue = library::queue::is_in_queue(db, &entry.video_id).unwrap_or(false);
+                    let video = crate::youtube::VideoInfo {
+                        id: entry.video_id.clone(), title: entry.title.clone(),
+                        channel: entry.channel.clone(), url: entry.url.clone(),
+                        duration: entry.duration_secs.map(|d| d as f64),
+                        view_count: None, thumbnail: None, description: None,
+                    };
+                    let url = entry.url.clone();
+                    pending_stream = Some((
+                        tokio::spawn(async move {
+                            let yt = YtDlp::new();
+                            use crate::youtube::YouTubeBackend;
+                            yt.get_stream_url(&url).await
+                        }),
+                        video,
+                        is_fav,
+                        in_queue,
+                    ));
                 } else if repeat_mode != crate::player::RepeatMode::All {
                     // Queue empty, not repeat-all → stop
                     app.set_status("⏹ Queue finished");
@@ -1461,32 +1526,19 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                             if !app.search_input.is_empty() {
                                 let query = app.search_input.clone();
                                 app.cancel_search_history_nav();
-                                app.set_status("Searching...");
-                                terminal.draw(|f| ui::draw(f, &app))?;
+                                app.set_status("🔍 Searching...");
 
-                                // Fetch larger batch for local pagination
+                                // Spawn search in background to keep TUI responsive
                                 let fetch_count = app.search_page_size * 5;
-                                match yt.search(&query, fetch_count).await {
-                                    Ok(results) => {
-                                        // Persist to search history
-                                        library::search_history::add_search(db, &query).ok();
-                                        app.search_history =
-                                            library::search_history::get_searches(db, 100)
-                                                .unwrap_or_default();
-
-                                        let total = results.len();
-                                        app.set_search_results(results);
-                                        app.set_panel(Panel::Results);
-                                        app.set_status(format!(
-                                            "Found {} results (page 1/{})",
-                                            total,
-                                            app.search_total_pages()
-                                        ));
-                                    }
-                                    Err(e) => {
-                                        app.set_status(format!("Search failed: {}", e));
-                                    }
-                                }
+                                let q = query.clone();
+                                pending_search = Some((
+                                    tokio::spawn(async move {
+                                        let yt = YtDlp::new();
+                                        use crate::youtube::YouTubeBackend;
+                                        yt.search(&q, fetch_count).await
+                                    }),
+                                    query,
+                                ));
                             }
                         }
                         KeyCode::Backspace => {
@@ -1517,69 +1569,26 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         }
                         KeyCode::Enter => {
                             if let Some(video) = app.search_results.get(app.selected_index).cloned() {
-                                app.set_status(format!("Loading: {}...", video.title));
-                                terminal.draw(|f| ui::draw(f, &app))?;
-
-                                match yt.get_stream_url(&video.url).await {
-                                    Ok(stream) => {
-                                        if let Some(mut old) = player.take() {
-                                            old.stop().await.ok();
-                                        }
-                                        let mut p = MpvPlayer::new();
-                                        if p.play(&stream.audio_url, &video.title).await.is_ok() {
-                                            let is_fav =
-                                                library::favorites::is_favorite(db, &video.id)
-                                                    .unwrap_or(false);
-                                            let in_queue =
-                                                library::queue::is_in_queue(db, &video.id)
-                                                    .unwrap_or(false);
-
-                                            // Write state file
-                                            let state = crate::player::state::StateFile::new(
-                                                video.clone(),
-                                                false,
-                                            );
-                                            state.write().ok();
-
-                                            app.now_playing = Some(NowPlaying {
-                                                video: video.clone(),
-                                                position_secs: 0,
-                                                duration_secs: video.duration.unwrap_or(0.0) as u64,
-                                                paused: false,
-                                                volume: 80,
-                                                speed: 1.0,
-                                                repeat: crate::player::RepeatMode::Off,
-                                                shuffle: false,
-                                                is_fav,
-                                                in_queue,
-                                                sleep_deadline: None,
-                                            });
-
-                                            library::history::add_to_history(db, &video, 0).ok();
-                                            player = Some(p);
-                                            // Defer resume seek until mpv has loaded the stream
-                                            if let Ok(Some(saved_pos)) = library::playback_position::get_position(db, &video.id) {
-                                                app.pending_resume_seek = Some(saved_pos);
-                                                // Pause immediately to avoid brief playback from position 0
-                                                if let Some(ref pl) = player { pl.pause().await.ok(); }
-                                            }
-                                            // Fetch transcript for AI chat context
-                                            app.set_status(format!("Playing: {} — loading transcript…", video.title));
-                                            terminal.draw(|f| ui::draw(f, &app))?;
-                                            let transcript = fetch_transcript(&video.url).await.unwrap_or(None);
-                                            app.transcript = transcript.clone();
-                                            app.lyrics_scroll = 0;
-                                            app.lyrics_auto_scroll = true;
-                                            ai_context = Some(VideoContext::new(video.clone(), transcript));
-                                            app.chat_messages.clear();
-                                            app.chat_scroll = 0;
-                                            app.set_status(format!("Playing: {}", video.title));
-                                        }
-                                    }
-                                    Err(e) => {
-                                        app.set_status(format!("Failed to play: {}", e));
-                                    }
+                                // Save position of current track before switching
+                                if let Some(ref np) = app.now_playing {
+                                    library::playback_position::save_position(
+                                        db, &np.video.id, np.position_secs, np.duration_secs,
+                                    ).ok();
                                 }
+                                app.set_status(format!("⏳ Loading: {}...", video.title));
+                                let is_fav = library::favorites::is_favorite(db, &video.id).unwrap_or(false);
+                                let in_queue = library::queue::is_in_queue(db, &video.id).unwrap_or(false);
+                                let url = video.url.clone();
+                                pending_stream = Some((
+                                    tokio::spawn(async move {
+                                        let yt = YtDlp::new();
+                                        use crate::youtube::YouTubeBackend;
+                                        yt.get_stream_url(&url).await
+                                    }),
+                                    video,
+                                    is_fav,
+                                    in_queue,
+                                ));
                             }
                         }
                         KeyCode::Char('a') => {
@@ -1691,72 +1700,29 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         KeyCode::Enter => {
                             // Play selected queue item
                             if let Some(entry) = app.queue_items.get(app.selected_index).cloned() {
-                                app.set_status(format!("Loading: {}...", entry.title));
-                                terminal.draw(|f| ui::draw(f, &app))?;
-
-                                let fake_video = crate::youtube::VideoInfo {
+                                if let Some(ref np) = app.now_playing {
+                                    library::playback_position::save_position(db, &np.video.id, np.position_secs, np.duration_secs).ok();
+                                }
+                                app.set_status(format!("⏳ Loading: {}...", entry.title));
+                                let video = crate::youtube::VideoInfo {
                                     id: entry.video_id.clone(),
                                     title: entry.title.clone(),
                                     channel: entry.channel.clone(),
                                     duration: entry.duration_secs.map(|s| s as f64),
-                                    view_count: None,
-                                    thumbnail: None,
-                                    url: entry.url.clone(),
-                                    description: None,
+                                    view_count: None, thumbnail: None,
+                                    url: entry.url.clone(), description: None,
                                 };
-
-                                match yt.get_stream_url(&entry.url).await {
-                                    Ok(stream) => {
-                                        if let Some(mut old) = player.take() { old.stop().await.ok(); }
-                                        let mut p = MpvPlayer::new();
-                                        if p.play(&stream.audio_url, &entry.title).await.is_ok() {
-                                            let state = crate::player::state::StateFile::new(fake_video.clone(), false);
-                                            state.write().ok();
-                                            app.now_playing = Some(NowPlaying {
-                                                video: fake_video,
-                                                position_secs: 0,
-                                                duration_secs: entry.duration_secs.unwrap_or(0) as u64,
-                                                paused: false,
-                                                volume: 80,
-                                                speed: 1.0,
-                                                repeat: crate::player::RepeatMode::Off,
-                                                shuffle: false,
-                                                is_fav: false,
-                                                in_queue: true, // playing from queue
-                                                sleep_deadline: None,
-                                            });
-                                            player = Some(p);
-                                            // Defer resume seek until mpv has loaded the stream
-                                            if let Ok(Some(saved_pos)) = library::playback_position::get_position(db, &entry.video_id) {
-                                                app.pending_resume_seek = Some(saved_pos);
-                                                // Pause immediately to avoid brief playback from position 0
-                                                if let Some(ref pl) = player { pl.pause().await.ok(); }
-                                            }
-                                            // Fetch transcript for AI chat context
-                                            app.set_status(format!("Playing: {} — loading transcript…", entry.title));
-                                            terminal.draw(|f| ui::draw(f, &app))?;
-                                            let transcript = fetch_transcript(&entry.url).await.unwrap_or(None);
-                                            let vi = crate::youtube::VideoInfo {
-                                                id: entry.video_id.clone(),
-                                                title: entry.title.clone(),
-                                                url: entry.url.clone(),
-                                                channel: entry.channel.clone(),
-                                                duration: entry.duration_secs.map(|d| d as f64),
-                                                view_count: None,
-                                                thumbnail: None,
-                                                description: None,
-                                            };
-                                            ai_context = Some(VideoContext::new(vi, transcript.clone()));
-                                            app.transcript = transcript;
-                                            app.lyrics_scroll = 0;
-                                            app.lyrics_auto_scroll = true;
-                                            app.chat_messages.clear();
-                                            app.chat_scroll = 0;
-                                            app.set_status(format!("Playing: {}", entry.title));
-                                        }
-                                    }
-                                    Err(e) => { app.set_status(format!("Failed: {}", e)); }
-                                }
+                                let url = entry.url.clone();
+                                pending_stream = Some((
+                                    tokio::spawn(async move {
+                                        let yt = YtDlp::new();
+                                        use crate::youtube::YouTubeBackend;
+                                        yt.get_stream_url(&url).await
+                                    }),
+                                    video,
+                                    false,
+                                    true, // in_queue
+                                ));
                             }
                         }
                         KeyCode::Char('d') => {
@@ -1817,69 +1783,29 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         KeyCode::Down | KeyCode::Char('j') => { app.select_next(); }
                         KeyCode::Enter => {
                             if let Some(entry) = app.fav_items.get(app.selected_index).cloned() {
-                                app.set_status(format!("Loading: {}...", entry.title));
-                                terminal.draw(|f| ui::draw(f, &app))?;
-                                match yt.get_stream_url(&entry.url).await {
-                                    Ok(stream) => {
-                                        if let Some(mut old) = player.take() { old.stop().await.ok(); }
-                                        let mut p = MpvPlayer::new();
-                                        if p.play(&stream.audio_url, &entry.title).await.is_ok() {
-                                            let is_fav = true; // it's a favorite!
-                                            let in_queue =
-                                                library::queue::is_in_queue(db, &entry.video_id)
-                                                    .unwrap_or(false);
-
-                                            let video = crate::youtube::VideoInfo {
-                                                id: entry.video_id.clone(),
-                                                title: entry.title.clone(),
-                                                channel: entry.channel.clone(),
-                                                duration: entry.duration_secs.map(|s| s as f64),
-                                                view_count: None,
-                                                thumbnail: None,
-                                                url: entry.url.clone(),
-                                                description: None,
-                                            };
-
-                                            let state = crate::player::state::StateFile::new(
-                                                video.clone(), false,
-                                            );
-                                            state.write().ok();
-
-                                            app.now_playing = Some(NowPlaying {
-                                                video: video.clone(),
-                                                position_secs: 0,
-                                                duration_secs: entry.duration_secs.unwrap_or(0) as u64,
-                                                paused: false,
-                                                volume: 80,
-                                                speed: 1.0,
-                                                repeat: crate::player::RepeatMode::Off,
-                                                shuffle: false,
-                                                is_fav,
-                                                in_queue,
-                                                sleep_deadline: None,
-                                            });
-                                            player = Some(p);
-                                            // Defer resume seek until mpv has loaded the stream
-                                            if let Ok(Some(saved_pos)) = library::playback_position::get_position(db, &video.id) {
-                                                app.pending_resume_seek = Some(saved_pos);
-                                                // Pause immediately to avoid brief playback from position 0
-                                                if let Some(ref pl) = player { pl.pause().await.ok(); }
-                                            }
-                                            // Fetch transcript for AI chat context
-                                            app.set_status(format!("Playing: {} — loading transcript…", entry.title));
-                                            terminal.draw(|f| ui::draw(f, &app))?;
-                                            let transcript = fetch_transcript(&entry.url).await.unwrap_or(None);
-                                            app.transcript = transcript.clone();
-                                            app.lyrics_scroll = 0;
-                                            app.lyrics_auto_scroll = true;
-                                            ai_context = Some(VideoContext::new(video, transcript));
-                                            app.chat_messages.clear();
-                                            app.chat_scroll = 0;
-                                            app.set_status(format!("Playing: {}", entry.title));
-                                        }
-                                    }
-                                    Err(e) => { app.set_status(format!("Failed: {}", e)); }
+                                if let Some(ref np) = app.now_playing {
+                                    library::playback_position::save_position(db, &np.video.id, np.position_secs, np.duration_secs).ok();
                                 }
+                                app.set_status(format!("⏳ Loading: {}...", entry.title));
+                                let in_queue = library::queue::is_in_queue(db, &entry.video_id).unwrap_or(false);
+                                let video = crate::youtube::VideoInfo {
+                                    id: entry.video_id.clone(), title: entry.title.clone(),
+                                    channel: entry.channel.clone(),
+                                    duration: entry.duration_secs.map(|s| s as f64),
+                                    view_count: None, thumbnail: None,
+                                    url: entry.url.clone(), description: None,
+                                };
+                                let url = entry.url.clone();
+                                pending_stream = Some((
+                                    tokio::spawn(async move {
+                                        let yt = YtDlp::new();
+                                        use crate::youtube::YouTubeBackend;
+                                        yt.get_stream_url(&url).await
+                                    }),
+                                    video,
+                                    true, // is_fav
+                                    in_queue,
+                                ));
                             }
                         }
                         KeyCode::Char('d') => {
@@ -1944,76 +1870,30 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         KeyCode::Down | KeyCode::Char('j') => { app.select_next(); }
                         KeyCode::Enter => {
                             if let Some(entry) = app.history_items.get(app.selected_index).cloned() {
-                                app.set_status(format!("Loading: {}...", entry.title));
-                                terminal.draw(|f| ui::draw(f, &app))?;
-                                match yt.get_stream_url(&entry.url).await {
-                                    Ok(stream) => {
-                                        if let Some(mut old) = player.take() { old.stop().await.ok(); }
-                                        let mut p = MpvPlayer::new();
-                                        if p.play(&stream.audio_url, &entry.title).await.is_ok() {
-                                            let fake_video = crate::youtube::VideoInfo {
-                                                id: entry.video_id.clone(),
-                                                title: entry.title.clone(),
-                                                channel: entry.channel.clone(),
-                                                duration: entry.duration_secs.map(|s| s as f64),
-                                                view_count: None,
-                                                thumbnail: None,
-                                                url: entry.url.clone(),
-                                                description: None,
-                                            };
-                                            let state = crate::player::state::StateFile::new(fake_video.clone(), false);
-                                            state.write().ok();
-                                            let is_fav =
-                                                library::favorites::is_favorite(db, &entry.video_id)
-                                                    .unwrap_or(false);
-                                            let in_queue =
-                                                library::queue::is_in_queue(db, &entry.video_id)
-                                                    .unwrap_or(false);
-                                            app.now_playing = Some(NowPlaying {
-                                                video: fake_video,
-                                                position_secs: 0,
-                                                duration_secs: entry.duration_secs.unwrap_or(0) as u64,
-                                                paused: false,
-                                                volume: 80,
-                                                speed: 1.0,
-                                                repeat: crate::player::RepeatMode::Off,
-                                                shuffle: false,
-                                                is_fav,
-                                                in_queue,
-                                                sleep_deadline: None,
-                                            });
-                                            player = Some(p);
-                                            // Defer resume seek until mpv has loaded the stream
-                                            if let Ok(Some(saved_pos)) = library::playback_position::get_position(db, &entry.video_id) {
-                                                app.pending_resume_seek = Some(saved_pos);
-                                                // Pause immediately to avoid brief playback from position 0
-                                                if let Some(ref pl) = player { pl.pause().await.ok(); }
-                                            }
-                                            // Fetch transcript for AI chat context
-                                            app.set_status(format!("Playing: {} — loading transcript…", entry.title));
-                                            terminal.draw(|f| ui::draw(f, &app))?;
-                                            let transcript = fetch_transcript(&entry.url).await.unwrap_or(None);
-                                            let vi = crate::youtube::VideoInfo {
-                                                id: entry.video_id.clone(),
-                                                title: entry.title.clone(),
-                                                url: entry.url.clone(),
-                                                channel: entry.channel.clone(),
-                                                duration: entry.duration_secs.map(|d| d as f64),
-                                                view_count: None,
-                                                thumbnail: None,
-                                                description: None,
-                                            };
-                                            ai_context = Some(VideoContext::new(vi, transcript.clone()));
-                                            app.transcript = transcript;
-                                            app.lyrics_scroll = 0;
-                                            app.lyrics_auto_scroll = true;
-                                            app.chat_messages.clear();
-                                            app.chat_scroll = 0;
-                                            app.set_status(format!("Playing: {}", entry.title));
-                                        }
-                                    }
-                                    Err(e) => { app.set_status(format!("Failed: {}", e)); }
+                                if let Some(ref np) = app.now_playing {
+                                    library::playback_position::save_position(db, &np.video.id, np.position_secs, np.duration_secs).ok();
                                 }
+                                app.set_status(format!("⏳ Loading: {}...", entry.title));
+                                let is_fav = library::favorites::is_favorite(db, &entry.video_id).unwrap_or(false);
+                                let in_queue = library::queue::is_in_queue(db, &entry.video_id).unwrap_or(false);
+                                let video = crate::youtube::VideoInfo {
+                                    id: entry.video_id.clone(), title: entry.title.clone(),
+                                    channel: entry.channel.clone(),
+                                    duration: entry.duration_secs.map(|s| s as f64),
+                                    view_count: None, thumbnail: None,
+                                    url: entry.url.clone(), description: None,
+                                };
+                                let url = entry.url.clone();
+                                pending_stream = Some((
+                                    tokio::spawn(async move {
+                                        let yt = YtDlp::new();
+                                        use crate::youtube::YouTubeBackend;
+                                        yt.get_stream_url(&url).await
+                                    }),
+                                    video,
+                                    is_fav,
+                                    in_queue,
+                                ));
                             }
                         }
                         KeyCode::Char('l') => {
@@ -2096,75 +1976,44 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                     })
                                 });
                                 if let Some((item, remaining_items)) = play_info {
-                                    app.set_status(format!("Loading: {}...", item.title));
-                                    terminal.draw(|f| ui::draw(f, &app))?;
-                                    match yt.get_stream_url(&item.url).await {
-                                        Ok(stream) => {
-                                            if let Some(mut old) = player.take() { old.stop().await.ok(); }
-                                            let mut p = MpvPlayer::new();
-                                            if p.play(&stream.audio_url, &item.title).await.is_ok() {
-                                                let video = crate::youtube::VideoInfo {
-                                                    id: item.video_id.clone(),
-                                                    title: item.title.clone(),
-                                                    channel: item.channel.clone(),
-                                                    url: item.url.clone(),
-                                                    duration: item.duration_secs.map(|d| d as f64),
-                                                    view_count: None,
-                                                    thumbnail: None,
-                                                    description: None,
-                                                };
-                                                let state = crate::player::state::StateFile::new(video.clone(), false);
-                                                state.write().ok();
-                                                app.now_playing = Some(NowPlaying {
-                                                    video: video.clone(),
-                                                    position_secs: 0,
-                                                    duration_secs: item.duration_secs.unwrap_or(0) as u64,
-                                                    paused: false,
-                                                    volume: 80,
-                                                    speed: 1.0,
-                                                    repeat: crate::player::RepeatMode::Off,
-                                                    shuffle: false,
-                                                    is_fav: false,
-                                                    in_queue: false,
-                                                    sleep_deadline: None,
-                                                });
-                                                player = Some(p);
-                                            // Defer resume seek until mpv has loaded the stream
-                                            if let Ok(Some(saved_pos)) = library::playback_position::get_position(db, &video.id) {
-                                                app.pending_resume_seek = Some(saved_pos);
-                                                // Pause immediately to avoid brief playback from position 0
-                                                if let Some(ref pl) = player { pl.pause().await.ok(); }
-                                            }
-                                                let transcript = fetch_transcript(&item.url).await.unwrap_or(None);
-                                                ai_context = Some(VideoContext::new(video, transcript.clone()));
-                                                app.transcript = transcript;
+                                    if let Some(ref np) = app.now_playing {
+                                        library::playback_position::save_position(db, &np.video.id, np.position_secs, np.duration_secs).ok();
+                                    }
+                                    app.set_status(format!("⏳ Loading: {}...", item.title));
 
-                                                // Queue remaining playlist items after the selected one
-                                                library::queue::clear_queue(db).ok();
-                                                let mut queued = 0usize;
-                                                for ri in &remaining_items {
-                                                    let rv = crate::youtube::VideoInfo {
-                                                        id: ri.video_id.clone(),
-                                                        title: ri.title.clone(),
-                                                        channel: ri.channel.clone(),
-                                                        url: ri.url.clone(),
-                                                        duration: ri.duration_secs.map(|d| d as f64),
-                                                        view_count: None, thumbnail: None, description: None,
-                                                    };
-                                                    if library::queue::add_to_queue(db, &rv).unwrap_or(false) {
-                                                        queued += 1;
-                                                    }
-                                                }
-                                                app.queue_items = library::queue::get_queue(db).unwrap_or_default();
+                                    // Queue remaining playlist items (fast DB I/O)
+                                    library::queue::clear_queue(db).ok();
+                                    let mut queued = 0usize;
+                                    for ri in &remaining_items {
+                                        let rv = crate::youtube::VideoInfo {
+                                            id: ri.video_id.clone(), title: ri.title.clone(),
+                                            channel: ri.channel.clone(), url: ri.url.clone(),
+                                            duration: ri.duration_secs.map(|d| d as f64),
+                                            view_count: None, thumbnail: None, description: None,
+                                        };
+                                        if library::queue::add_to_queue(db, &rv).unwrap_or(false) { queued += 1; }
+                                    }
+                                    app.queue_items = library::queue::get_queue(db).unwrap_or_default();
 
-                                                if queued > 0 {
-                                                    app.set_status(format!("▶ {} · {} more queued", item.title, queued));
-                                                } else {
-                                                    app.set_status(format!("Playing: {}", item.title));
-                                                }
-                                            }
-                                        }
-                                        Err(e) => { app.set_status(format!("Failed: {}", e)); }
+                                    let video = crate::youtube::VideoInfo {
+                                        id: item.video_id.clone(), title: item.title.clone(),
+                                        channel: item.channel.clone(), url: item.url.clone(),
+                                        duration: item.duration_secs.map(|d| d as f64),
+                                        view_count: None, thumbnail: None, description: None,
+                                    };
+                                    let url = item.url.clone();
+                                    pending_stream = Some((
+                                        tokio::spawn(async move {
+                                            let yt = YtDlp::new();
+                                            use crate::youtube::YouTubeBackend;
+                                            yt.get_stream_url(&url).await
+                                        }),
+                                        video,
+                                        false,
+                                        false,
+                                    ));
+                                    if queued > 0 {
+                                        app.set_status(format!("⏳ Loading: {} · {} more queued", item.title, queued));
                                     }
                                 }
                             } else {
@@ -2191,47 +2040,24 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                         app.set_status(format!("🎶 Loaded {} tracks from '{}' into queue", count, pl.name));
                                         // Auto-play first
                                         if let Some(entry) = library::queue::pop_next(db).unwrap_or(None) {
-                                            match yt.get_stream_url(&entry.url).await {
-                                                Ok(stream) => {
-                                                    if let Some(mut old) = player.take() { old.stop().await.ok(); }
-                                                    let mut p = MpvPlayer::new();
-                                                    if p.play(&stream.audio_url, &entry.title).await.is_ok() {
-                                                        let video = crate::youtube::VideoInfo {
-                                                            id: entry.video_id.clone(),
-                                                            title: entry.title.clone(),
-                                                            channel: entry.channel.clone(),
-                                                            url: entry.url.clone(),
-                                                            duration: entry.duration_secs.map(|d| d as f64),
-                                                            view_count: None,
-                                                            thumbnail: None,
-                                                            description: None,
-                                                        };
-                                                        let state = crate::player::state::StateFile::new(video.clone(), false);
-                                                        state.write().ok();
-                                                        app.now_playing = Some(NowPlaying {
-                                                            video: video.clone(),
-                                                            position_secs: 0,
-                                                            duration_secs: entry.duration_secs.unwrap_or(0) as u64,
-                                                            paused: false, volume: 80, speed: 1.0,
-                                                            repeat: crate::player::RepeatMode::Off,
-                                                            shuffle: false, is_fav: false, in_queue: false,
-                                                            sleep_deadline: None,
-                                                        });
-                                                        player = Some(p);
-                                            // Defer resume seek until mpv has loaded the stream
-                                            if let Ok(Some(saved_pos)) = library::playback_position::get_position(db, &video.id) {
-                                                app.pending_resume_seek = Some(saved_pos);
-                                                // Pause immediately to avoid brief playback from position 0
-                                                if let Some(ref pl) = player { pl.pause().await.ok(); }
-                                            }
-                                                        let transcript = fetch_transcript(&entry.url).await.unwrap_or(None);
-                                                        ai_context = Some(VideoContext::new(video, transcript.clone()));
-                                                        app.transcript = transcript;
-                                                        app.set_status(format!("▶ Playing playlist: {}", entry.title));
-                                                    }
-                                                }
-                                                Err(e) => app.set_status(format!("Failed: {}", e)),
-                                            }
+                                            app.set_status(format!("⏳ Loading: {}...", entry.title));
+                                            let video = crate::youtube::VideoInfo {
+                                                id: entry.video_id.clone(), title: entry.title.clone(),
+                                                channel: entry.channel.clone(), url: entry.url.clone(),
+                                                duration: entry.duration_secs.map(|d| d as f64),
+                                                view_count: None, thumbnail: None, description: None,
+                                            };
+                                            let url = entry.url.clone();
+                                            pending_stream = Some((
+                                                tokio::spawn(async move {
+                                                    let yt = YtDlp::new();
+                                                    use crate::youtube::YouTubeBackend;
+                                                    yt.get_stream_url(&url).await
+                                                }),
+                                                video,
+                                                false,
+                                                false,
+                                            ));
                                         }
                                     }
                                     Err(e) => app.set_status(format!("Error: {}", e)),

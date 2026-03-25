@@ -4,7 +4,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{
         Block, BorderType, Borders, Cell, Clear, Paragraph, Row,
-        Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Tabs,
+        Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState, Tabs,
     },
     Frame,
 };
@@ -336,7 +336,8 @@ fn draw_results(frame: &mut Frame, area: Rect, app: &App) {
             .style(Style::default().fg(DIM).add_modifier(Modifier::BOLD))
             .bottom_margin(0),
     );
-    frame.render_widget(table, area);
+    let mut table_state = TableState::default().with_selected(Some(app.selected_index));
+    frame.render_stateful_widget(table, area, &mut table_state);
 
     // Scrollbar
     if app.search_results.len() > 1 {
@@ -544,7 +545,8 @@ fn draw_queue(frame: &mut Frame, area: Rect, app: &App) {
     let table = Table::new(rows, [Constraint::Length(5), Constraint::Percentage(80), Constraint::Length(7)])
         .block(block)
         .header(Row::new(vec![" #", "Title", "Time"]).style(Style::default().fg(DIM).add_modifier(Modifier::BOLD)));
-    frame.render_widget(table, area);
+    let mut table_state = TableState::default().with_selected(Some(app.selected_index));
+    frame.render_stateful_widget(table, area, &mut table_state);
 
     // Scrollbar
     if app.queue_items.len() > 1 {
@@ -626,7 +628,8 @@ fn draw_favorites(frame: &mut Frame, area: Rect, app: &App) {
     ])
     .block(block)
     .header(Row::new(vec![" ❤", "Title", "Channel", "Time"]).style(Style::default().fg(DIM).add_modifier(Modifier::BOLD)));
-    frame.render_widget(table, area);
+    let mut table_state = TableState::default().with_selected(Some(app.selected_index));
+    frame.render_stateful_widget(table, area, &mut table_state);
 
     // Scrollbar
     if app.fav_items.len() > 1 {
@@ -664,6 +667,8 @@ fn draw_history(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    // Track which video_ids already showed position so only the first (most recent) entry gets it
+    let mut seen_position: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let rows: Vec<Row> = app
         .history_items
         .iter()
@@ -679,9 +684,13 @@ fn draw_history(frame: &mut Frame, area: Rect, app: &App) {
             let prefix = if selected { "\u{25b8}" } else { " " };
             let ch = e.channel.as_deref().unwrap_or("Unknown");
             let when = e.played_at.split('T').next().unwrap_or(&e.played_at);
-            // Show saved position indicator if applicable
+            // Show saved position only on the first (most recent) entry per video
             let title_display = if let Some(&pos) = app.saved_positions.get(&e.video_id) {
-                format!("{} \u{23f8} {}:{:02}", e.title, pos / 60, pos % 60)
+                if seen_position.insert(&e.video_id) {
+                    format!("{} \u{23f8} {}:{:02}", e.title, pos / 60, pos % 60)
+                } else {
+                    e.title.clone()
+                }
             } else {
                 e.title.clone()
             };
@@ -707,7 +716,8 @@ fn draw_history(frame: &mut Frame, area: Rect, app: &App) {
     ])
     .block(block)
     .header(Row::new(vec![" #", "Title", "Channel", "Date"]).style(Style::default().fg(DIM).add_modifier(Modifier::BOLD)));
-    frame.render_widget(table, area);
+    let mut table_state = TableState::default().with_selected(Some(app.selected_index));
+    frame.render_stateful_widget(table, area, &mut table_state);
 
     // Scrollbar
     if app.history_items.len() > 1 {
@@ -765,7 +775,8 @@ fn draw_playlists(frame: &mut Frame, area: Rect, app: &App) {
             Row::new(vec![" #", "Title", "Channel"])
                 .style(Style::default().fg(DIM).add_modifier(Modifier::BOLD)),
         );
-        frame.render_widget(table, area);
+        let mut table_state = TableState::default().with_selected(Some(app.selected_index));
+        frame.render_stateful_widget(table, area, &mut table_state);
     } else {
         // List view: show all playlists
         // Split area if we have an active name input
@@ -822,7 +833,8 @@ fn draw_playlists(frame: &mut Frame, area: Rect, app: &App) {
             Row::new(vec![" #", "Name", "Tracks"])
                 .style(Style::default().fg(DIM).add_modifier(Modifier::BOLD)),
         );
-        frame.render_widget(table, table_area);
+        let mut table_state = TableState::default().with_selected(Some(app.selected_index));
+        frame.render_stateful_widget(table, table_area, &mut table_state);
 
         // Render name input if active
         if let Some(ref name) = app.playlist_name_input {
