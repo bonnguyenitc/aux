@@ -801,16 +801,18 @@ fn draw_help(frame: &mut Frame, area: Rect) {
     let lines = vec![
         Line::from(""),
         Line::from(vec![Span::styled(
-            "  Keybindings",
+            "  Navigation",
             Style::default().fg(BRAND).bold(),
         )]),
         Line::from(""),
+        help_row("Tab", "Cycle panels: Search→Results→Lyrics→Queue→Favs→History→Playlists→Chat→Help"),
         help_row("/", "New search"),
-        help_row("Enter", "Play selected / confirm"),
-        help_row("Tab", "Cycle panels (Search → Results → Queue → History → Help)"),
-        help_row("↑ ↓ / j k", "Navigate list"),
-        help_row("← / →", "Page prev / next  (Results panel)"),
-        help_row("Esc / q", "Back / Quit"),
+        help_row("Enter", "Play / confirm / select"),
+        help_row("↑ ↓ / j k", "Navigate list items"),
+        help_row("← →", "Page prev / next (Results panel)"),
+        help_row("Esc", "Back / close sub-view"),
+        help_row("q", "Back / quit (not in Chat/Search — those type 'q')"),
+        help_row("?", "This help screen"),
         Line::from(""),
         Line::from(vec![Span::styled(
             "  Playback (any panel while playing)",
@@ -818,21 +820,38 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         )]),
         Line::from(""),
         help_row("Space", "Pause / Resume"),
-        help_row("← / →", "Seek ±10s  (Search/Help panel)"),
-        help_row("Shift + ← / →", "Seek ±60s  (any panel)"),
-        help_row("↑ / ↓", "Volume ±5%  (Search/Help panel)"),
-        help_row("+ / -  or  =", "Volume ±5%  (any panel)"),
-        help_row("] / [", "Speed up / down"),
+        help_row("← →", "Seek ±10s (non-list panels)"),
+        help_row("Shift+← →", "Seek ±60s (any panel)"),
+        help_row("+ / - (or =)", "Volume ±5%"),
+        help_row("] / [", "Speed up / down (0.25x–4.0x)"),
         help_row("n", "Skip to next track"),
-        help_row("p", "Restart / prev track"),
-        help_row("r", "Cycle repeat  (off → one → all)"),
-        help_row("z", "Toggle shuffle"),
-        help_row("t", "Toggle 30-min sleep timer  (shows in bar)"),
-        help_row("f", "Toggle favorite"),
-        help_row("a", "Add current track to queue"),
-        help_row("d", "Remove selected item from queue  (Queue panel only)"),
+        help_row("p", "Restart / previous track"),
+        help_row("r", "Cycle repeat (off → one → all)"),
+        help_row("z", "Toggle shuffle 🔀"),
+        help_row("f", "Toggle favorite ❤️"),
+        help_row("a", "Add/remove current track to queue 📋"),
         help_row("S", "Stop playback"),
-        help_row("c", "Chat hint  (use duet chat in terminal)"),
+        help_row("t", "Sleep timer (15m → 30m → 1h → 2h → off) 😴"),
+        help_row("e", "Cycle equalizer (flat→bass→vocal→treble→loudness) 🎛️"),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "  Lyrics Panel",
+            Style::default().fg(ACCENT).bold(),
+        )]),
+        Line::from(""),
+        help_row("Shift+↑ ↓", "Scroll lyrics manually"),
+        help_row("0", "Reset auto-scroll"),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "  Playlists Panel",
+            Style::default().fg(ACCENT).bold(),
+        )]),
+        Line::from(""),
+        help_row("Enter", "View playlist items (list) / Play item (detail)"),
+        help_row("n", "Create new playlist"),
+        help_row("d", "Delete selected playlist"),
+        help_row("p", "Play entire playlist (load to queue)"),
+        help_row("Esc", "Back to list / back to Search"),
         Line::from(""),
         Line::from(vec![Span::styled(
             "  Chat Panel",
@@ -842,8 +861,6 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         help_row("Enter", "Send message to AI"),
         help_row("↑ / ↓", "Scroll chat history"),
         help_row("Esc", "Back to Search"),
-        Line::from(""),
-        help_row("?", "This help screen"),
     ];
 
     let help = Paragraph::new(lines).block(
@@ -966,7 +983,7 @@ fn draw_now_playing_empty(frame: &mut Frame, area: Rect) {
 
 fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
     let playing_hint = if app.now_playing.is_some() {
-        "  | Space:pause  ←→:seek  +/-:vol  ]/[:speed  r:repeat  z:shuffle  n:next  t:sleep  S:stop"
+        "  | Space:pause  ←→:seek  +/-:vol  ]/[:spd  r:repeat  z:shuf  n:next  t:sleep  e:eq  S:stop"
     } else {
         ""
     };
@@ -978,7 +995,7 @@ fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
         Panel::Queue     => " Enter:play  ↑↓jk:nav  d:remove  Tab:panel",
         Panel::Favorites => " Enter:play  ↑↓jk:nav  d:unfav  Tab:panel  Esc:back",
         Panel::History   => " Enter:replay  ↑↓jk:nav  Tab:panel",
-        Panel::Playlists => " Enter:view/play  ↑↓jk:nav  p:play all  Esc:back  Tab:panel",
+        Panel::Playlists => " Enter:view/play  ↑↓jk:nav  n:new  d:del  p:play all  Esc:back  Tab:panel",
         Panel::Chat      => " Enter:send  ↑↓:scroll  Esc:back  Tab:panel",
         Panel::Help      => " Any key to go back",
     };

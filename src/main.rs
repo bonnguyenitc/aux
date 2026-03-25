@@ -377,9 +377,9 @@ fn print_player_ui(video: &youtube::VideoInfo) {
         video.channel.as_deref().unwrap_or("Unknown").dimmed()
     );
     println!(
-        "  {} pause  {} seek±10s  {} seek±30s  {} vol  {} speed  {} repeat  {} shuffle  {} eq  {} fav  {} queue  {} sleep  {} search  {} chat  {} quit",
+        "  {} pause  {} seek±10s  {} seek±60s  {} vol  {} speed  {} repeat  {} shuffle  {} eq  {} fav  {} queue  {} sleep  {} search  {} chat  {} quit",
         "[spc]".cyan(), "[←→]".cyan(), "[⇧←→]".cyan(), "[↑↓]".cyan(),
-        "[+/-]".cyan(), "[r]".cyan(), "[x]".cyan(), "[e]".cyan(), "[f]".cyan(),
+        "[]/[]".cyan(), "[r]".cyan(), "[z]".cyan(), "[e]".cyan(), "[f]".cyan(),
         "[a]".cyan(), "[t]".cyan(), "[s]".cyan(), "[c]".cyan(), "[q]".cyan(),
     );
     println!();
