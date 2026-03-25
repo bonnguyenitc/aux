@@ -162,6 +162,20 @@ pub enum Commands {
         action: Option<QueueAction>,
     },
 
+    /// Manage playlists
+    #[command(alias = "pl")]
+    Playlist {
+        #[command(subcommand)]
+        action: Option<PlaylistAction>,
+    },
+
+    /// Set equalizer preset
+    #[command(alias = "eq")]
+    Equalizer {
+        /// Preset: flat, bass-boost, vocal, treble, loudness (omit to show current)
+        preset: Option<String>,
+    },
+
     /// Manage duet configuration
     #[command(alias = "cfg")]
     Config {
@@ -199,6 +213,46 @@ pub enum QueueAction {
     Next,
     /// Clear the queue
     Clear,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PlaylistAction {
+    /// Create a new playlist
+    Create {
+        /// Playlist name
+        name: String,
+    },
+    /// List all playlists
+    List,
+    /// Show items in a playlist
+    Show {
+        /// Playlist name
+        name: String,
+    },
+    /// Add a video URL to a playlist
+    Add {
+        /// Playlist name
+        name: String,
+        /// YouTube URL
+        url: String,
+    },
+    /// Remove a video from a playlist
+    Remove {
+        /// Playlist name
+        name: String,
+        /// Video ID
+        video_id: String,
+    },
+    /// Play a playlist (load all items into queue and start)
+    Play {
+        /// Playlist name
+        name: String,
+    },
+    /// Delete a playlist
+    Delete {
+        /// Playlist name
+        name: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]

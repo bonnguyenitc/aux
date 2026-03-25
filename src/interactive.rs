@@ -20,6 +20,10 @@ pub enum InteractiveAction {
     Quit,
     NewSearch,
     Chat,
+    /// Track finished, auto-play next from queue
+    PlayNext,
+    /// Sleep timer expired
+    SleepStop,
 }
 
 pub async fn run_interactive(
@@ -172,6 +176,22 @@ async fn interactive_loop(
             }
         }
 
+        // ── Sleep timer enforcement ──────────────────────────────────────
+        if let Ok(sf) = crate::player::state::StateFile::read() {
+            if let Some(deadline) = sf.sleep_deadline {
+                if chrono::Utc::now() >= deadline {
+                    return Ok(InteractiveAction::SleepStop);
+                }
+            }
+        }
+
+        // ── EOF detection: auto-play next from queue ─────────────────────
+        if state.repeat != RepeatMode::One {
+            if let Ok(true) = player.is_finished().await {
+                return Ok(InteractiveAction::PlayNext);
+            }
+        }
+
         // ── Poll keyboard events (500ms timeout) ──────────────────────────
         if event::poll(Duration::from_millis(500))? {
             if let Event::Key(KeyEvent {
@@ -246,6 +266,26 @@ async fn interactive_loop(
                         // Icon updates on next status bar tick automatically
                     }
 
+                    // ── Equalizer cycle ─────────────────────────────────
+                    (KeyCode::Char('e'), _) => {
+                        let presets = ["flat", "bass-boost", "vocal", "treble", "loudness"];
+                        let current = crate::player::state::StateFile::read()
+                            .ok()
+                            .and_then(|s| s.eq_preset)
+                            .unwrap_or_else(|| "flat".to_string());
+                        let idx = presets.iter().position(|p| *p == current).unwrap_or(0);
+                        let next = presets[(idx + 1) % presets.len()];
+                        // Save
+                        if let Ok(mut sf) = crate::player::state::StateFile::read() {
+                            sf.eq_preset = Some(next.to_string());
+                            sf.write().ok();
+                        }
+                        // Apply
+                        let filter = crate::eq_preset_filter(next).unwrap_or("");
+                        player.set_audio_filter(filter).await.ok();
+                        state.flash(format!("🎛️ EQ: {}", next));
+                    }
+
                     // ── New search ─────────────────────────────────────
                     (KeyCode::Char('s'), _) => {
                         return Ok(InteractiveAction::NewSearch);
@@ -298,6 +338,39 @@ async fn interactive_loop(
                                     state.flash(format!("📋 added to queue (#{})", len));
                                 }
                                 Err(e) => state.flash(format!("❌ queue error: {}", e)),
+                            }
+                        }
+                    }
+
+                    // ── Sleep timer: t (cycle 15m → 30m → 1h → 2h → off)
+                    (KeyCode::Char('t'), _) => {
+                        use chrono::Utc;
+                        if let Ok(mut sf) = crate::player::state::StateFile::read() {
+                            let now = Utc::now();
+                            let remaining_mins = sf.sleep_deadline
+                                .map(|d| (d - now).num_minutes().max(0))
+                                .unwrap_or(0);
+                            let (next_mins, label) = if remaining_mins == 0 || sf.sleep_deadline.is_none() {
+                                (15, "15min")
+                            } else if remaining_mins <= 15 {
+                                (30, "30min")
+                            } else if remaining_mins <= 30 {
+                                (60, "1h")
+                            } else if remaining_mins <= 60 {
+                                (120, "2h")
+                            } else {
+                                (0, "off")
+                            };
+
+                            if next_mins == 0 {
+                                sf.sleep_deadline = None;
+                                sf.write().ok();
+                                state.flash("😴 Sleep timer cancelled".to_string());
+                            } else {
+                                let deadline = now + chrono::Duration::minutes(next_mins);
+                                sf.sleep_deadline = Some(deadline);
+                                sf.write().ok();
+                                state.flash(format!("😴 Sleep in {} ({})", label, deadline.format("%H:%M")));
                             }
                         }
                     }

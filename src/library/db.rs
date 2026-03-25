@@ -78,9 +78,30 @@ impl Database {
                 searched_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             );
 
+            CREATE TABLE IF NOT EXISTS playlists (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS playlist_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                playlist_id INTEGER NOT NULL,
+                video_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                channel TEXT,
+                url TEXT NOT NULL,
+                duration_secs INTEGER,
+                position INTEGER NOT NULL,
+                added_at TEXT DEFAULT (datetime('now', 'localtime')),
+                FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
+                UNIQUE(playlist_id, video_id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_history_played ON history(played_at);
             CREATE INDEX IF NOT EXISTS idx_queue_position ON queue(position);
             CREATE INDEX IF NOT EXISTS idx_search_history_at ON search_history(searched_at);
+            CREATE INDEX IF NOT EXISTS idx_playlist_items_pos ON playlist_items(playlist_id, position);
             ",
         )
         .context("Failed to initialize database tables")?;

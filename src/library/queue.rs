@@ -162,6 +162,7 @@ mod tests {
             duration: Some(300.0),
             view_count: None,
             thumbnail: None,
+            description: None,
         }
     }
 

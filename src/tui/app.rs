@@ -14,6 +14,7 @@ pub enum Panel {
     Queue,
     Favorites,
     History,
+    Playlists,
     Chat,
     Help,
 }
@@ -84,6 +85,11 @@ pub struct App {
     pub lyrics_scroll: u16,
     /// Whether lyrics auto-scrolls to current segment
     pub lyrics_auto_scroll: bool,
+    // ── Playlists state ──────────────────────────────────────────
+    pub playlist_list: Vec<crate::library::playlist::Playlist>,
+    pub playlist_items_view: Option<(String, Vec<crate::library::playlist::PlaylistItem>)>,
+    /// When Some, the user is typing a new playlist name
+    pub playlist_name_input: Option<String>,
 }
 
 impl App {
@@ -113,6 +119,9 @@ impl App {
             transcript: None,
             lyrics_scroll: 0,
             lyrics_auto_scroll: true,
+            playlist_list: Vec::new(),
+            playlist_items_view: None,
+            playlist_name_input: None,
         }
     }
 
@@ -185,6 +194,13 @@ impl App {
             Panel::Queue => self.queue_items.len(),
             Panel::Favorites => self.fav_items.len(),
             Panel::History => self.history_items.len(),
+            Panel::Playlists => {
+                if let Some((_, ref items)) = self.playlist_items_view {
+                    items.len()
+                } else {
+                    self.playlist_list.len()
+                }
+            }
             _ => 0,
         };
         if max > 0 && self.selected_index < max - 1 {

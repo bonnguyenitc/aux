@@ -22,6 +22,8 @@ pub struct StateFile {
     pub daemon: bool,
     #[serde(default)]
     pub sleep_deadline: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub eq_preset: Option<String>,
 }
 
 impl StateFile {
@@ -43,6 +45,7 @@ impl StateFile {
             shuffle: false,
             daemon,
             sleep_deadline: None,
+            eq_preset: None,
         }
     }
 
@@ -115,6 +118,7 @@ mod tests {
             duration: Some(300.0),
             view_count: None,
             thumbnail: None,
+            description: None,
             url: "https://youtube.com/watch?v=test123".into(),
         }
     }

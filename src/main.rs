@@ -19,7 +19,7 @@ use std::io::{self, Write};
 use std::time::Instant;
 
 use ai::{ai_chat, fetch_transcript, VideoContext};
-use cli::{Cli, Commands, AiAction, ConfigAction, FavAction, PlayerAction, QueueAction, YoutubeAction};
+use cli::{Cli, Commands, AiAction, ConfigAction, FavAction, PlayerAction, PlaylistAction, QueueAction, YoutubeAction};
 use config::Config;
 use interactive::{run_interactive, InteractiveAction};
 use library::Database;
@@ -175,6 +175,12 @@ async fn main() -> Result<()> {
         Commands::Queue { action } => {
             cmd_queue(&db, action, &config).await?;
         }
+        Commands::Playlist { action } => {
+            cmd_playlist(&db, action, &config).await?;
+        }
+        Commands::Equalizer { preset } => {
+            cmd_equalizer(preset).await?;
+        }
         Commands::Config { action } => {
             let mut cfg = Config::load()?;
             cmd_config(action, &mut cfg).await?;
@@ -245,8 +251,9 @@ async fn play_video(
     print_player_ui(video);
 
     // Enter interactive mode
+    let mut current_video = video.clone();
     let result = loop {
-        match run_interactive(&mut player, video, db, ai_context.transcript.as_ref()).await? {
+        match run_interactive(&mut player, &current_video, db, ai_context.transcript.as_ref()).await? {
             InteractiveAction::Quit => {
                 player.stop().await?;
                 println!("\n  {} 👋", "Stopped.".dimmed());
@@ -270,14 +277,84 @@ async fn play_video(
                 run_chat_mode(&mut ai_context, config).await?;
 
                 // Restore player UI so user sees context after chat
-                print_player_ui(video);
+                print_player_ui(&current_video);
+            }
+            InteractiveAction::SleepStop => {
+                // Clear sleep deadline
+                if let Ok(mut sf) = crate::player::state::StateFile::read() {
+                    sf.sleep_deadline = None;
+                    sf.write().ok();
+                }
+                player.stop().await?;
+                println!("\n  {} 😴 Sleep timer — goodnight! 🌙", "Stopped.".dimmed());
+                break None;
+            }
+            InteractiveAction::PlayNext => {
+                use crate::library::queue;
+                // RepeatAll: re-add current track to queue
+                if let Ok(sf) = crate::player::state::StateFile::read() {
+                    if sf.repeat == crate::player::RepeatMode::All {
+                        queue::add_to_queue(db, &current_video).ok();
+                    }
+                }
+                // Pick next: shuffle → random, else sequential
+                let shuffle_on = crate::player::state::StateFile::read()
+                    .map(|s| s.shuffle).unwrap_or(false);
+                let next_entry = if shuffle_on {
+                    let q = queue::get_queue(db).unwrap_or_default();
+                    if q.is_empty() {
+                        None
+                    } else {
+                        use std::collections::hash_map::DefaultHasher;
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = DefaultHasher::new();
+                        std::time::SystemTime::now().hash(&mut hasher);
+                        let idx = (hasher.finish() as usize) % q.len();
+                        let entry = q[idx].clone();
+                        queue::remove_from_queue(db, entry.id).ok();
+                        Some(entry)
+                    }
+                } else {
+                    queue::pop_next(db).unwrap_or(None)
+                };
+
+                if let Some(entry) = next_entry {
+                    println!("\n  {} {}", "⏭ Next:".green().bold(), entry.title.bold());
+                    match yt.get_stream_url(&entry.url).await {
+                        Ok(stream) => {
+                            player.load(&stream.audio_url).await?;
+                            current_video = crate::youtube::VideoInfo {
+                                id: entry.video_id.clone(),
+                                title: entry.title.clone(),
+                                channel: entry.channel.clone(),
+                                url: entry.url.clone(),
+                                duration: entry.duration_secs.map(|d| d as f64),
+                                view_count: None,
+                                thumbnail: None,
+                                description: None,
+                            };
+                            let transcript = crate::ai::transcript::fetch_transcript(&current_video.url)
+                                .await.unwrap_or(None);
+                            ai_context = VideoContext::new(current_video.clone(), transcript);
+                            library::history::add_to_history(db, &current_video, 0).ok();
+                            print_player_ui_inline(&entry.title, entry.channel.as_deref());
+                        }
+                        Err(e) => {
+                            println!("  {} {}", "Failed:".red(), e);
+                        }
+                    }
+                } else {
+                    player.stop().await?;
+                    println!("\n  {} Queue finished 🎵", "⏹".dimmed());
+                    break None;
+                }
             }
         }
     };
 
     // Record to history
     let listened_secs = started_at.elapsed().as_secs();
-    library::history::add_to_history(db, video, listened_secs)?;
+    library::history::add_to_history(db, &current_video, listened_secs)?;
 
     Ok(result)
 }
@@ -300,12 +377,23 @@ fn print_player_ui(video: &youtube::VideoInfo) {
         video.channel.as_deref().unwrap_or("Unknown").dimmed()
     );
     println!(
-        "  {} pause  {} seek±10s  {} seek±30s  {} vol  {} speed  {} repeat  {} shuffle  {} fav  {} queue  {} search  {} chat  {} quit",
+        "  {} pause  {} seek±10s  {} seek±30s  {} vol  {} speed  {} repeat  {} shuffle  {} eq  {} fav  {} queue  {} sleep  {} search  {} chat  {} quit",
         "[spc]".cyan(), "[←→]".cyan(), "[⇧←→]".cyan(), "[↑↓]".cyan(),
-        "[+/-]".cyan(), "[r]".cyan(), "[x]".cyan(), "[f]".cyan(),
-        "[a]".cyan(), "[s]".cyan(), "[c]".cyan(), "[q]".cyan(),
+        "[+/-]".cyan(), "[r]".cyan(), "[x]".cyan(), "[e]".cyan(), "[f]".cyan(),
+        "[a]".cyan(), "[t]".cyan(), "[s]".cyan(), "[c]".cyan(), "[q]".cyan(),
     );
     println!();
+}
+
+/// Compact UI for auto-play transitions (no full re-print)
+fn print_player_ui_inline(title: &str, channel: Option<&str>) {
+    use colored::Colorize;
+    println!(
+        "  {} {}  ·  {}",
+        "▶ Now playing:".green().bold(),
+        title.bold(),
+        channel.unwrap_or("Unknown").dimmed(),
+    );
 }
 
 // ─── Chat ────────────────────────────────────────────────────
@@ -898,6 +986,156 @@ async fn cmd_queue(db: &Database, action: Option<QueueAction>, config: &Config) 
 
     Ok(())
 }
+// ─── Playlists ────────────────────────────────────────────────
+
+async fn cmd_playlist(db: &Database, action: Option<PlaylistAction>, config: &Config) -> Result<()> {
+    use crate::library::playlist;
+
+    match action {
+        None | Some(PlaylistAction::List) => {
+            let pls = playlist::list_playlists(db)?;
+            println!("\n  {} {}\n", "🎶".bold(), "Playlists".bold());
+            if pls.is_empty() {
+                println!("  {}", "No playlists yet. Create one: duet playlist create <name>".dimmed());
+                return Ok(());
+            }
+            for (i, pl) in pls.iter().enumerate() {
+                println!(
+                    "  {} {} ({} tracks)",
+                    format!("{}.", i + 1).dimmed(),
+                    pl.name.bold(),
+                    pl.item_count,
+                );
+            }
+            println!();
+        }
+        Some(PlaylistAction::Create { name }) => {
+            match playlist::create_playlist(db, &name) {
+                Ok(_) => println!("  {} Created playlist: {}", "🎶", name.bold()),
+                Err(_) => println!("  {} Playlist '{}' already exists", "⚠️", name),
+            }
+        }
+        Some(PlaylistAction::Delete { name }) => {
+            if playlist::delete_playlist(db, &name)? {
+                println!("  {} Deleted playlist: {}", "🗑️", name);
+            } else {
+                println!("  {} Playlist '{}' not found", "⚠️", name);
+            }
+        }
+        Some(PlaylistAction::Show { name }) => {
+            match playlist::get_playlist_items(db, &name) {
+                Ok(items) => {
+                    println!("\n  {} {} ({} tracks)\n", "🎶".bold(), name.bold(), items.len());
+                    for (i, item) in items.iter().enumerate() {
+                        let ch = item.channel.as_deref().unwrap_or("Unknown");
+                        println!(
+                            "  {} {} — {}",
+                            format!("{}.", i + 1).dimmed(),
+                            item.title.bold(),
+                            ch.dimmed(),
+                        );
+                    }
+                    println!();
+                }
+                Err(_) => println!("  {} Playlist '{}' not found", "⚠️", name),
+            }
+        }
+        Some(PlaylistAction::Add { name, url }) => {
+            let yt = YtDlp::new();
+            let results = yt.search(&url, 1).await?;
+            if let Some(video) = results.first() {
+                match playlist::add_to_playlist(db, &name, video) {
+                    Ok(true) => println!("  {} {} added to '{}'", "🎶", video.title.bold(), name),
+                    Ok(false) => println!("  {} Already in playlist", "⚠️"),
+                    Err(e) => println!("  {} Error: {}", "❌", e),
+                }
+            }
+        }
+        Some(PlaylistAction::Remove { name, video_id }) => {
+            if playlist::remove_from_playlist(db, &name, &video_id)? {
+                println!("  {} Removed from '{}'", "🗑️", name);
+            } else {
+                println!("  {} Video not found in playlist", "⚠️");
+            }
+        }
+        Some(PlaylistAction::Play { name }) => {
+            // Clear queue, load playlist items, then play first
+            library::queue::clear_queue(db)?;
+            match playlist::load_playlist_to_queue(db, &name) {
+                Ok(count) if count > 0 => {
+                    println!("  {} Loaded {} tracks from '{}' into queue", "🎶", count, name.bold());
+                    // Play first item
+                    if let Some(entry) = library::queue::pop_next(db)? {
+                        println!("  {} Playing: {}", "▶".green(), entry.title.bold());
+                        cmd_play(&entry.url, config, db).await?;
+                    }
+                }
+                Ok(_) => println!("  {} Playlist '{}' is empty", "⚠️", name),
+                Err(e) => println!("  {} Error: {}", "❌", e),
+            }
+        }
+    }
+    Ok(())
+}
+
+// ─── Equalizer ────────────────────────────────────────────────
+
+/// EQ preset name → mpv audio filter string
+pub fn eq_preset_filter(name: &str) -> Option<&'static str> {
+    match name {
+        "flat" => Some(""),
+        "bass-boost" => Some("superequalizer=1b=5:2b=4:3b=3:4b=1"),
+        "vocal" => Some("superequalizer=6b=3:7b=4:8b=3:9b=2"),
+        "treble" => Some("superequalizer=8b=3:9b=4:10b=5:11b=4"),
+        "loudness" => Some("superequalizer=1b=4:2b=3:9b=3:10b=4"),
+        _ => None,
+    }
+}
+
+pub fn eq_preset_names() -> &'static [&'static str] {
+    &["flat", "bass-boost", "vocal", "treble", "loudness"]
+}
+
+async fn cmd_equalizer(preset: Option<String>) -> Result<()> {
+    match preset {
+        None => {
+            // Show current EQ and available presets
+            let current = crate::player::state::StateFile::read()
+                .ok()
+                .and_then(|s| s.eq_preset)
+                .unwrap_or_else(|| "flat".to_string());
+            println!("\n  {} {}\n", "🎛️".bold(), "Equalizer".bold());
+            for name in eq_preset_names() {
+                let marker = if *name == current { "▶" } else { " " };
+                println!("  {} {}", marker.green(), name.bold());
+            }
+            println!("\n  Usage: duet eq <preset>");
+        }
+        Some(name) => {
+            if eq_preset_filter(&name).is_some() {
+                // Save to state file
+                if let Ok(mut state) = crate::player::state::StateFile::read() {
+                    state.eq_preset = Some(name.clone());
+                    state.write().ok();
+                }
+                // Apply to running player
+                let player = crate::player::mpv::MpvPlayer::connect_existing();
+                if let Ok(p) = player {
+                    let filter = eq_preset_filter(&name).unwrap();
+                    if filter.is_empty() {
+                        p.set_audio_filter("").await.ok();
+                    } else {
+                        p.set_audio_filter(filter).await.ok();
+                    }
+                }
+                println!("  {} EQ set to: {}", "🎛️", name.bold());
+            } else {
+                println!("  {} Unknown preset: '{}'. Available: {:?}", "❌", name, eq_preset_names());
+            }
+        }
+    }
+    Ok(())
+}
 
 // ─── TUI Mode ────────────────────────────────────────────────
 
@@ -940,7 +1178,9 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
             let pos = p.get_position().await.map(|d| d.as_secs()).unwrap_or(0);
             let dur = p.get_duration().await.map(|d| d.as_secs()).unwrap_or(0);
             let vol = p.get_volume().await.unwrap_or(80);
-            let paused = app.now_playing.as_ref().map(|np| np.paused).unwrap_or(false);
+            let paused = p.get_paused().await.unwrap_or(
+                app.now_playing.as_ref().map(|np| np.paused).unwrap_or(false)
+            );
             app.update_playback(pos, dur, paused, vol);
 
             // Keep AI context position in sync
@@ -949,8 +1189,115 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
             }
 
             // Sync speed/repeat/shuffle/sleep from state file
-            if let Ok(state) = crate::player::state::StateFile::read() {
+            if let Ok(mut state) = crate::player::state::StateFile::read() {
                 app.update_player_meta(state.speed, state.repeat, state.shuffle, state.sleep_deadline);
+
+                // ── Sleep timer enforcement ──────────────────────────────
+                if let Some(deadline) = state.sleep_deadline {
+                    if chrono::Utc::now() >= deadline {
+                        // Time's up — stop playback
+                        if let Some(ref mut pl) = player {
+                            pl.stop().await.ok();
+                        }
+                        player = None;
+                        app.now_playing = None;
+                        state.sleep_deadline = None;
+                        state.write().ok();
+                        app.set_status("😴 Sleep timer — playback stopped. Goodnight! 🌙");
+                        continue;
+                    }
+                }
+            }
+
+            // ── Auto-play: detect track end → play next from queue ───────
+            let is_eof = p.is_finished().await.unwrap_or(false);
+            let repeat_mode = app.now_playing.as_ref()
+                .map(|np| np.repeat)
+                .unwrap_or(crate::player::RepeatMode::Off);
+
+            // RepeatOne is handled by mpv loop-file, skip auto-play
+            if is_eof && repeat_mode != crate::player::RepeatMode::One {
+                // RepeatAll: re-add current track to end of queue before popping next
+                if repeat_mode == crate::player::RepeatMode::All {
+                    if let Some(ref np) = app.now_playing {
+                        library::queue::add_to_queue(db, &np.video).ok();
+                    }
+                }
+
+                // Shuffle: pick random from queue
+                let next_entry = if app.now_playing.as_ref().map(|np| np.shuffle).unwrap_or(false) {
+                    let q = library::queue::get_queue(db).unwrap_or_default();
+                    if q.is_empty() {
+                        None
+                    } else {
+                        use std::collections::hash_map::DefaultHasher;
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = DefaultHasher::new();
+                        std::time::SystemTime::now().hash(&mut hasher);
+                        let idx = (hasher.finish() as usize) % q.len();
+                        let entry = q[idx].clone();
+                        library::queue::remove_from_queue(db, entry.id).ok();
+                        Some(entry)
+                    }
+                } else {
+                    library::queue::pop_next(db).unwrap_or(None)
+                };
+
+                if let Some(entry) = next_entry {
+                    app.set_status(format!("⏭ Next: {}...", entry.title));
+                    terminal.draw(|f| ui::draw(f, &app))?;
+                    match yt.get_stream_url(&entry.url).await {
+                        Ok(stream) => {
+                            if let Some(ref p) = player {
+                                p.load(&stream.audio_url).await.ok();
+                            }
+                            let is_fav = library::favorites::is_favorite(db, &entry.video_id).unwrap_or(false);
+                            let in_queue = library::queue::is_in_queue(db, &entry.video_id).unwrap_or(false);
+                            app.now_playing = Some(tui::app::NowPlaying {
+                                video: crate::youtube::VideoInfo {
+                                    id: entry.video_id.clone(),
+                                    title: entry.title.clone(),
+                                    channel: entry.channel.clone(),
+                                    url: entry.url.clone(),
+                                    duration: entry.duration_secs.map(|d| d as f64),
+                                    view_count: None,
+                                    thumbnail: None,
+                                    description: None,
+                                },
+                                position_secs: 0,
+                                duration_secs: entry.duration_secs.map(|d| d as u64).unwrap_or(0),
+                                paused: false,
+                                volume: vol,
+                                speed: app.now_playing.as_ref().map(|np| np.speed).unwrap_or(1.0),
+                                repeat: repeat_mode,
+                                shuffle: app.now_playing.as_ref().map(|np| np.shuffle).unwrap_or(false),
+                                is_fav,
+                                in_queue,
+                                sleep_deadline: None,
+                            });
+                            // Fetch transcript
+                            let transcript = fetch_transcript(&entry.url).await.unwrap_or(None);
+                            app.transcript = transcript.clone();
+                            app.lyrics_scroll = 0;
+                            app.lyrics_auto_scroll = true;
+                            let vi = app.now_playing.as_ref().unwrap().video.clone();
+                            ai_context = Some(VideoContext::new(vi, transcript));
+                            app.chat_messages.clear();
+                            app.chat_scroll = 0;
+                            // Reload queue list
+                            app.queue_items = library::queue::get_queue(db).unwrap_or_default();
+                            // Record history
+                            library::history::add_to_history(db, &app.now_playing.as_ref().unwrap().video, 0).ok();
+                            app.set_status(format!("▶ Playing: {}", entry.title));
+                        }
+                        Err(e) => {
+                            app.set_status(format!("Failed: {}", e));
+                        }
+                    }
+                } else if repeat_mode != crate::player::RepeatMode::All {
+                    // Queue empty, not repeat-all → stop
+                    app.set_status("⏹ Queue finished");
+                }
             }
         }
 
@@ -966,7 +1313,8 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         Panel::Lyrics     => Panel::Queue,
                         Panel::Queue      => Panel::Favorites,
                         Panel::Favorites  => Panel::History,
-                        Panel::History    => Panel::Chat,
+                        Panel::History    => Panel::Playlists,
+                        Panel::Playlists  => Panel::Chat,
                         Panel::Chat       => Panel::Help,
                         Panel::Help       => Panel::Search,
                     };
@@ -980,6 +1328,10 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         }
                         Panel::History => {
                             app.history_items = library::history::get_history(db, 50).unwrap_or_default();
+                        }
+                        Panel::Playlists => {
+                            app.playlist_list = library::playlist::list_playlists(db).unwrap_or_default();
+                            app.playlist_items_view = None;
                         }
                         _ => {}
                     }
@@ -1056,7 +1408,9 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         _ => {}
                     },
 
-                    Panel::Results => match code {
+                    Panel::Results => {
+                        handled = true;
+                        match code {
                         KeyCode::Esc | KeyCode::Char('q') => {
                             app.set_panel(Panel::Search);
                         }
@@ -1140,7 +1494,6 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                     Err(e) => app.set_status(format!("Queue error: {}", e)),
                                 }
                             }
-                            handled = true;
                         }
                         KeyCode::Char('f') => {
                             if let Some(video) = app.search_results.get(app.selected_index) {
@@ -1162,7 +1515,6 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                     }
                                 }
                             }
-                            handled = true;
                         }
                         KeyCode::Char('/') => {
                             app.set_panel(Panel::Search);
@@ -1189,8 +1541,8 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 ));
                             }
                         }
-                        _ => {}
-                    },
+                        _ => { handled = false; }
+                    }},
 
                     Panel::Lyrics => {
                         match (code, modifiers) {
@@ -1217,7 +1569,9 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         handled = true;
                     },
 
-                    Panel::Queue => match code {
+                    Panel::Queue => {
+                        handled = true;
+                        match code {
                         KeyCode::Esc | KeyCode::Char('q') => {
                             app.set_panel(Panel::Search);
                         }
@@ -1317,10 +1671,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 }
                             }
                         }
-                        _ => {}
-                    },
+                        _ => { handled = false; }
+                    }},
 
-                    Panel::Favorites => match code {
+                    Panel::Favorites => {
+                        handled = true;
+                        match code {
                         KeyCode::Esc | KeyCode::Char('q') => {
                             app.set_panel(Panel::Search);
                         }
@@ -1420,10 +1776,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 }
                             }
                         }
-                        _ => {}
-                    },
+                        _ => { handled = false; }
+                    }},
 
-                    Panel::History => match code {
+                    Panel::History => {
+                        handled = true;
+                        match code {
                         KeyCode::Esc | KeyCode::Char('q') => {
                             app.set_panel(Panel::Search);
                         }
@@ -1497,11 +1855,198 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 }
                             }
                         }
-                        _ => {}
-                    },
+                        _ => { handled = false; }
+                    }},
+
+                    Panel::Playlists => {
+                        handled = true;
+                        match code {
+                        // ── Input mode: typing a new playlist name ──
+                        _ if app.playlist_name_input.is_some() => {
+                            match code {
+                                KeyCode::Esc => {
+                                    app.playlist_name_input = None;
+                                    app.set_status("Cancelled");
+                                }
+                                KeyCode::Enter => {
+                                    let name = app.playlist_name_input.take().unwrap_or_default();
+                                    let name = name.trim().to_string();
+                                    if !name.is_empty() {
+                                        match library::playlist::create_playlist(db, &name) {
+                                            Ok(_) => {
+                                                app.playlist_list = library::playlist::list_playlists(db).unwrap_or_default();
+                                                app.set_status(format!("✅ Created playlist: {}", name));
+                                            }
+                                            Err(e) => app.set_status(format!("Error: {}", e)),
+                                        }
+                                    } else {
+                                        app.set_status("Playlist name cannot be empty");
+                                    }
+                                }
+                                KeyCode::Backspace => {
+                                    if let Some(ref mut s) = app.playlist_name_input {
+                                        s.pop();
+                                    }
+                                }
+                                KeyCode::Char(c) => {
+                                    if let Some(ref mut s) = app.playlist_name_input {
+                                        s.push(c);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            if app.playlist_items_view.is_some() {
+                                // Go back to playlist list
+                                app.playlist_items_view = None;
+                                app.playlist_list = library::playlist::list_playlists(db).unwrap_or_default();
+                                app.selected_index = 0;
+                            } else {
+                                app.set_panel(Panel::Search);
+                            }
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => { app.select_prev(); }
+                        KeyCode::Down | KeyCode::Char('j') => { app.select_next(); }
+                        KeyCode::Enter => {
+                            if app.playlist_items_view.is_some() {
+                                // Play selected item from playlist items view
+                                if let Some((_, ref items)) = app.playlist_items_view {
+                                    if let Some(item) = items.get(app.selected_index).cloned() {
+                                        app.set_status(format!("Loading: {}...", item.title));
+                                        terminal.draw(|f| ui::draw(f, &app))?;
+                                        match yt.get_stream_url(&item.url).await {
+                                            Ok(stream) => {
+                                                if let Some(mut old) = player.take() { old.stop().await.ok(); }
+                                                let mut p = MpvPlayer::new();
+                                                if p.play(&stream.audio_url, &item.title).await.is_ok() {
+                                                    let video = crate::youtube::VideoInfo {
+                                                        id: item.video_id.clone(),
+                                                        title: item.title.clone(),
+                                                        channel: item.channel.clone(),
+                                                        url: item.url.clone(),
+                                                        duration: item.duration_secs.map(|d| d as f64),
+                                                        view_count: None,
+                                                        thumbnail: None,
+                                                        description: None,
+                                                    };
+                                                    let state = crate::player::state::StateFile::new(video.clone(), false);
+                                                    state.write().ok();
+                                                    app.now_playing = Some(NowPlaying {
+                                                        video: video.clone(),
+                                                        position_secs: 0,
+                                                        duration_secs: item.duration_secs.unwrap_or(0) as u64,
+                                                        paused: false,
+                                                        volume: 80,
+                                                        speed: 1.0,
+                                                        repeat: crate::player::RepeatMode::Off,
+                                                        shuffle: false,
+                                                        is_fav: false,
+                                                        in_queue: false,
+                                                        sleep_deadline: None,
+                                                    });
+                                                    player = Some(p);
+                                                    let transcript = fetch_transcript(&item.url).await.unwrap_or(None);
+                                                    ai_context = Some(VideoContext::new(video, transcript.clone()));
+                                                    app.transcript = transcript;
+                                                    app.set_status(format!("Playing: {}", item.title));
+                                                }
+                                            }
+                                            Err(e) => { app.set_status(format!("Failed: {}", e)); }
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Enter playlist detail view
+                                if let Some(pl) = app.playlist_list.get(app.selected_index) {
+                                    let name = pl.name.clone();
+                                    match library::playlist::get_playlist_items(db, &name) {
+                                        Ok(items) => {
+                                            app.playlist_items_view = Some((name, items));
+                                            app.selected_index = 0;
+                                        }
+                                        Err(e) => app.set_status(format!("Error: {}", e)),
+                                    }
+                                }
+                            }
+                        }
+                        // Play entire playlist (load to queue)
+                        KeyCode::Char('p') if app.playlist_items_view.is_none() => {
+                            if let Some(pl) = app.playlist_list.get(app.selected_index) {
+                                library::queue::clear_queue(db).ok();
+                                match library::playlist::load_playlist_to_queue(db, &pl.name) {
+                                    Ok(count) => {
+                                        app.queue_items = library::queue::get_queue(db).unwrap_or_default();
+                                        app.set_status(format!("🎶 Loaded {} tracks from '{}' into queue", count, pl.name));
+                                        // Auto-play first
+                                        if let Some(entry) = library::queue::pop_next(db).unwrap_or(None) {
+                                            match yt.get_stream_url(&entry.url).await {
+                                                Ok(stream) => {
+                                                    if let Some(mut old) = player.take() { old.stop().await.ok(); }
+                                                    let mut p = MpvPlayer::new();
+                                                    if p.play(&stream.audio_url, &entry.title).await.is_ok() {
+                                                        let video = crate::youtube::VideoInfo {
+                                                            id: entry.video_id.clone(),
+                                                            title: entry.title.clone(),
+                                                            channel: entry.channel.clone(),
+                                                            url: entry.url.clone(),
+                                                            duration: entry.duration_secs.map(|d| d as f64),
+                                                            view_count: None,
+                                                            thumbnail: None,
+                                                            description: None,
+                                                        };
+                                                        let state = crate::player::state::StateFile::new(video.clone(), false);
+                                                        state.write().ok();
+                                                        app.now_playing = Some(NowPlaying {
+                                                            video: video.clone(),
+                                                            position_secs: 0,
+                                                            duration_secs: entry.duration_secs.unwrap_or(0) as u64,
+                                                            paused: false, volume: 80, speed: 1.0,
+                                                            repeat: crate::player::RepeatMode::Off,
+                                                            shuffle: false, is_fav: false, in_queue: false,
+                                                            sleep_deadline: None,
+                                                        });
+                                                        player = Some(p);
+                                                        let transcript = fetch_transcript(&entry.url).await.unwrap_or(None);
+                                                        ai_context = Some(VideoContext::new(video, transcript.clone()));
+                                                        app.transcript = transcript;
+                                                        app.set_status(format!("▶ Playing playlist: {}", entry.title));
+                                                    }
+                                                }
+                                                Err(e) => app.set_status(format!("Failed: {}", e)),
+                                            }
+                                        }
+                                    }
+                                    Err(e) => app.set_status(format!("Error: {}", e)),
+                                }
+                            }
+                        }
+                        // New playlist: n (only in list view)
+                        KeyCode::Char('n') if app.playlist_items_view.is_none() => {
+                            app.playlist_name_input = Some(String::new());
+                            app.set_status("Enter a name for the new playlist");
+                        }
+                        // Delete playlist: d (only in list view)
+                        KeyCode::Char('d') if app.playlist_items_view.is_none() => {
+                            if let Some(pl) = app.playlist_list.get(app.selected_index) {
+                                let name = pl.name.clone();
+                                match library::playlist::delete_playlist(db, &name) {
+                                    Ok(_) => {
+                                        app.playlist_list = library::playlist::list_playlists(db).unwrap_or_default();
+                                        if app.selected_index > 0 && app.selected_index >= app.playlist_list.len() {
+                                            app.selected_index = app.playlist_list.len().saturating_sub(1);
+                                        }
+                                        app.set_status(format!("🗑 Deleted playlist: {}", name));
+                                    }
+                                    Err(e) => app.set_status(format!("Error: {}", e)),
+                                }
+                            }
+                        }
+                        _ => { handled = false; }
+                    }},
 
                     Panel::Chat => match code {
-                        KeyCode::Esc | KeyCode::Char('q') => {
+                        KeyCode::Esc => {
                             app.set_panel(Panel::Search);
                         }
                         KeyCode::Enter => {
@@ -1564,6 +2109,7 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                     Panel::Help => {
                         // Any key goes back
                         app.set_panel(Panel::Search);
+                        handled = true;
                     }
                 }
 
@@ -1575,8 +2121,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         (KeyCode::Char(' '), _) => {
                             if let Some(ref p) = player {
                                 p.toggle_pause().await.ok();
+                                // Read actual state from mpv to stay in sync
                                 if let Some(ref mut np) = app.now_playing {
-                                    np.paused = !np.paused;
+                                    match p.get_paused().await {
+                                        Ok(paused) => np.paused = paused,
+                                        Err(_) => np.paused = !np.paused, // fallback
+                                    }
                                 }
                             }
                         }
@@ -1727,25 +2277,61 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 }
                             }
                         }
-                        // Sleep timer: t (toggle 30min / off)
+                        // Sleep timer: t (cycle 15m → 30m → 1h → 2h → off)
                         (KeyCode::Char('t'), _) => {
                             use chrono::Utc;
                             if let Ok(mut state) = crate::player::state::StateFile::read() {
-                                if state.sleep_deadline.is_some() {
+                                let now = Utc::now();
+                                // Determine next step based on current remaining time
+                                let remaining_mins = state.sleep_deadline
+                                    .map(|d| (d - now).num_minutes().max(0))
+                                    .unwrap_or(0);
+                                let (next_mins, label) = if remaining_mins == 0 || state.sleep_deadline.is_none() {
+                                    (15, "15min")
+                                } else if remaining_mins <= 15 {
+                                    (30, "30min")
+                                } else if remaining_mins <= 30 {
+                                    (60, "1h")
+                                } else if remaining_mins <= 60 {
+                                    (120, "2h")
+                                } else {
+                                    (0, "off") // cancel
+                                };
+
+                                if next_mins == 0 {
                                     state.sleep_deadline = None;
                                     state.write().ok();
                                     app.set_status("😴 Sleep timer cancelled");
                                 } else {
-                                    let deadline = Utc::now() + chrono::Duration::minutes(30);
+                                    let deadline = now + chrono::Duration::minutes(next_mins);
                                     state.sleep_deadline = Some(deadline);
                                     state.write().ok();
-                                    app.set_status(format!("😴 Sleep in 30min ({})", deadline.format("%H:%M")));
+                                    app.set_status(format!("😴 Sleep in {} ({})", label, deadline.format("%H:%M")));
                                 }
                             }
                         }
                         // Chat: c (hint — terminal only)
                         (KeyCode::Char('c'), _) => {
                             app.set_status("💬 Chat: quit TUI then run: duet chat");
+                        }
+                        // Equalizer cycle: e
+                        (KeyCode::Char('e'), _) => {
+                            let presets = eq_preset_names();
+                            let current = crate::player::state::StateFile::read()
+                                .ok()
+                                .and_then(|s| s.eq_preset)
+                                .unwrap_or_else(|| "flat".to_string());
+                            let idx = presets.iter().position(|p| *p == current).unwrap_or(0);
+                            let next = presets[(idx + 1) % presets.len()];
+                            if let Ok(mut sf) = crate::player::state::StateFile::read() {
+                                sf.eq_preset = Some(next.to_string());
+                                sf.write().ok();
+                            }
+                            if let Some(ref p) = player {
+                                let filter = eq_preset_filter(next).unwrap_or("");
+                                p.set_audio_filter(filter).await.ok();
+                            }
+                            app.set_status(format!("🎛️ EQ: {}", next));
                         }
                         _ => {}
                     }

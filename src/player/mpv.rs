@@ -61,19 +61,79 @@ impl MpvPlayer {
         let _ = std::fs::remove_file(&self.socket_path);
     }
 
-    /// Send a JSON IPC command to mpv via Unix socket and return the response
+    /// Send a JSON IPC command to mpv via Unix socket and return the response.
+    /// Retries up to 3 times with backoff on connection failure.
+    /// Times out after 2 seconds to prevent hangs.
     async fn send_ipc_command(&self, command: &serde_json::Value) -> Result<String> {
-        let mut stream = UnixStream::connect(&self.socket_path)
-            .await
-            .context("Failed to connect to mpv socket")?;
         let mut cmd = serde_json::to_vec(command)?;
         cmd.push(b'\n');
-        stream.write_all(&cmd).await?;
 
-        let mut reader = BufReader::new(stream);
-        let mut response = String::new();
-        reader.read_line(&mut response).await?;
-        Ok(response)
+        let mut last_err = None;
+        for attempt in 0..3u32 {
+            if attempt > 0 {
+                sleep(Duration::from_millis(50 * (attempt as u64))).await;
+            }
+
+            let connect_result = tokio::time::timeout(
+                Duration::from_secs(2),
+                UnixStream::connect(&self.socket_path),
+            )
+            .await;
+
+            let mut stream = match connect_result {
+                Ok(Ok(s)) => s,
+                Ok(Err(e)) => {
+                    last_err = Some(e.into());
+                    continue;
+                }
+                Err(_) => {
+                    last_err = Some(anyhow::anyhow!("connection timeout"));
+                    continue;
+                }
+            };
+
+            // Write with timeout
+            let write_result = tokio::time::timeout(
+                Duration::from_secs(2),
+                stream.write_all(&cmd),
+            )
+            .await;
+
+            match write_result {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    last_err = Some(e.into());
+                    continue;
+                }
+                Err(_) => {
+                    last_err = Some(anyhow::anyhow!("write timeout"));
+                    continue;
+                }
+            }
+
+            // Read response with timeout
+            let mut reader = BufReader::new(stream);
+            let mut response = String::new();
+            let read_result = tokio::time::timeout(
+                Duration::from_secs(2),
+                reader.read_line(&mut response),
+            )
+            .await;
+
+            match read_result {
+                Ok(Ok(_)) => return Ok(response),
+                Ok(Err(e)) => {
+                    last_err = Some(e.into());
+                    continue;
+                }
+                Err(_) => {
+                    last_err = Some(anyhow::anyhow!("read timeout"));
+                    continue;
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("mpv IPC failed after 3 attempts")))
     }
 
     async fn mpv_command(&self, args: &[&str]) -> Result<String> {
@@ -111,6 +171,7 @@ impl MediaPlayer for MpvPlayer {
                 "--no-video",
                 &format!("--input-ipc-server={}", self.socket_path.display()),
                 "--input-media-keys=yes",
+                "--af=loudnorm",
                 "--really-quiet",
                 url,
             ])
@@ -145,6 +206,7 @@ impl MediaPlayer for MpvPlayer {
         self.mpv_command(&["cycle", "pause"]).await?;
         Ok(())
     }
+
 
     async fn stop(&mut self) -> Result<()> {
         if let Some(mut child) = self.process.take() {
@@ -231,6 +293,18 @@ impl MpvPlayer {
     pub async fn set_loop_file(&self, enabled: bool) -> Result<()> {
         let val = if enabled { "inf" } else { "no" };
         self.set_property("loop-file", &serde_json::json!(val)).await
+    }
+
+    /// Set audio filter chain (equalizer). Empty string to clear.
+    pub async fn set_audio_filter(&self, filter: &str) -> Result<()> {
+        if filter.is_empty() {
+            // Remove all audio filters, keep only loudnorm
+            self.set_property("af", &serde_json::json!("loudnorm")).await
+        } else {
+            // Set loudnorm + the equalizer filter
+            let combined = format!("loudnorm,{}", filter);
+            self.set_property("af", &serde_json::json!(combined)).await
+        }
     }
 }
 

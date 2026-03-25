@@ -3,7 +3,7 @@ use ratatui::{
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Gauge, List, ListItem, Paragraph, Tabs,
+        Block, BorderType, Borders, Cell, Gauge, List, ListItem, Paragraph, Row, Table, Tabs,
     },
     Frame,
 };
@@ -60,7 +60,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(brand, layout[0]);
 
     // Tabs
-    let tab_titles = vec!["Search", "Results", "Lyrics", "Queue", "Favs", "History", "Chat", "Help"];
+    let tab_titles = vec!["Search", "Results", "Lyrics", "Queue", "Favs", "History", "Playlists", "Chat", "Help"];
     let selected = match app.panel {
         Panel::Search => 0,
         Panel::Results => 1,
@@ -68,8 +68,9 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         Panel::Queue => 3,
         Panel::Favorites => 4,
         Panel::History => 5,
-        Panel::Chat => 6,
-        Panel::Help => 7,
+        Panel::Playlists => 6,
+        Panel::Chat => 7,
+        Panel::Help => 8,
     };
 
     let tabs = Tabs::new(tab_titles)
@@ -96,6 +97,7 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
         Panel::Queue => draw_queue(frame, area, app),
         Panel::Favorites => draw_favorites(frame, area, app),
         Panel::History => draw_history(frame, area, app),
+        Panel::Playlists => draw_playlists(frame, area, app),
         Panel::Chat => draw_chat(frame, area, app),
         Panel::Help => draw_help(frame, area),
     }
@@ -558,7 +560,126 @@ fn draw_history(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(list, area);
 }
 
+// ── Playlists panel ─────────────────────────────────────────────────────────
+
+fn draw_playlists(frame: &mut Frame, area: Rect, app: &App) {
+    if let Some((ref name, ref items)) = app.playlist_items_view {
+        // Detail view: show items in a specific playlist
+        let title = format!(" 🎶 {} ({} tracks) — [Esc] back, [Enter] play ", name, items.len());
+        let rows: Vec<Row> = items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                let style = if i == app.selected_index {
+                    Style::default().fg(BRAND).bold()
+                } else {
+                    Style::default().fg(TEXT)
+                };
+                let ch = item.channel.as_deref().unwrap_or("Unknown");
+                Row::new(vec![
+                    Cell::from(format!(" {}", i + 1)).style(Style::default().fg(DIM)),
+                    Cell::from(item.title.as_str()).style(style),
+                    Cell::from(ch).style(Style::default().fg(DIM)),
+                ])
+            })
+            .collect();
+
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(4),
+                Constraint::Percentage(70),
+                Constraint::Percentage(25),
+            ],
+        )
+        .block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(DIM)),
+        )
+        .header(
+            Row::new(vec![" #", "Title", "Channel"])
+                .style(Style::default().fg(DIM).add_modifier(Modifier::BOLD)),
+        );
+        frame.render_widget(table, area);
+    } else {
+        // List view: show all playlists
+        // Split area if we have an active name input
+        let (table_area, input_area) = if app.playlist_name_input.is_some() {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(3), Constraint::Length(3)])
+                .split(area);
+            (chunks[0], Some(chunks[1]))
+        } else {
+            (area, None)
+        };
+
+        let rows: Vec<Row> = app
+            .playlist_list
+            .iter()
+            .enumerate()
+            .map(|(i, pl)| {
+                let style = if i == app.selected_index {
+                    Style::default().fg(BRAND).bold()
+                } else {
+                    Style::default().fg(TEXT)
+                };
+                Row::new(vec![
+                    Cell::from(format!(" {}", i + 1)).style(Style::default().fg(DIM)),
+                    Cell::from(pl.name.as_str()).style(style),
+                    Cell::from(format!("{} tracks", pl.item_count)).style(Style::default().fg(DIM)),
+                ])
+            })
+            .collect();
+
+        let title = if app.playlist_name_input.is_some() {
+            " 🎶 Playlists — type name, [Enter] create, [Esc] cancel "
+        } else {
+            " 🎶 Playlists — [Enter] view, [p] play, [n] new, [d] delete "
+        };
+
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(4),
+                Constraint::Percentage(60),
+                Constraint::Percentage(30),
+            ],
+        )
+        .block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(DIM)),
+        )
+        .header(
+            Row::new(vec![" #", "Name", "Tracks"])
+                .style(Style::default().fg(DIM).add_modifier(Modifier::BOLD)),
+        );
+        frame.render_widget(table, table_area);
+
+        // Render name input if active
+        if let Some(ref name) = app.playlist_name_input {
+            let input = Paragraph::new(format!(" {}_", name))
+                .style(Style::default().fg(TEXT))
+                .block(
+                    Block::default()
+                        .title(" New playlist name ")
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .border_style(Style::default().fg(BRAND)),
+                );
+            frame.render_widget(input, input_area.unwrap());
+        }
+    }
+}
+
 // ── Chat panel ──────────────────────────────────────────────────────────────
+
 
 fn draw_chat(frame: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
@@ -857,6 +978,7 @@ fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
         Panel::Queue     => " Enter:play  ↑↓jk:nav  d:remove  Tab:panel",
         Panel::Favorites => " Enter:play  ↑↓jk:nav  d:unfav  Tab:panel  Esc:back",
         Panel::History   => " Enter:replay  ↑↓jk:nav  Tab:panel",
+        Panel::Playlists => " Enter:view/play  ↑↓jk:nav  p:play all  Esc:back  Tab:panel",
         Panel::Chat      => " Enter:send  ↑↓:scroll  Esc:back  Tab:panel",
         Panel::Help      => " Any key to go back",
     };
