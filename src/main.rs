@@ -300,17 +300,22 @@ async fn play_video(
         println!("  {} favorited", "❤️");
     }
 
-    // Fetch transcript
+    // Fetch transcript (3-tier: manual subs → auto subs → description)
     println!("  {} fetching transcript...", "📝".dimmed());
     let transcript = fetch_transcript(&video.url).await.unwrap_or(None);
     match &transcript {
+        Some(t) if t.language == "description" => println!(
+            "  {} using video description as context ({} chars)",
+            "📄".yellow(),
+            t.segments.first().map_or(0, |s| s.text.len()),
+        ),
         Some(t) => println!(
             "  {} transcript loaded ({} segments, lang: {})",
             "✅".green(),
             t.segments.len(),
             t.language
         ),
-        None => println!("  {} no transcript available", "⚠️".yellow()),
+        None => println!("  {} no transcript or description available", "⚠️".yellow()),
     }
 
     // Create AI context
@@ -324,14 +329,8 @@ async fn play_video(
     let mut player = MpvPlayer::new();
     player.play(&stream.audio_url, &video.title).await?;
 
-    // Print keybind legend exactly once before the player loop
-    println!(
-        "  {} pause  {} seek±10s  {} seek±30s  {} vol  {} speed  {} repeat  {} shuffle  {} fav  {} queue  {} search  {} chat  {} quit",
-        "[spc]".cyan(), "[←→]".cyan(), "[⇧←→]".cyan(), "[↑↓]".cyan(),
-        "[+/-]".cyan(), "[r]".cyan(), "[x]".cyan(), "[f]".cyan(),
-        "[a]".cyan(), "[s]".cyan(), "[c]".cyan(), "[q]".cyan(),
-    );
-    println!();
+    // Print player UI header (reused after returning from chat)
+    print_player_ui(video);
 
     // Enter interactive mode
     let result = loop {
@@ -357,7 +356,9 @@ async fn play_video(
                 }
 
                 run_chat_mode(&mut ai_context, config).await?;
-                // raw mode re-enabled by run_interactive on next loop iteration
+
+                // Restore player UI so user sees context after chat
+                print_player_ui(video);
             }
         }
     };
@@ -367,6 +368,32 @@ async fn play_video(
     library::history::add_to_history(db, video, listened_secs)?;
 
     Ok(result)
+}
+
+// ─── Player UI header ────────────────────────────────────────
+
+/// Print (or re-print) the now-playing header and keybind legend.
+/// Called at initial playback start and again after returning from chat mode.
+fn print_player_ui(video: &youtube::VideoInfo) {
+    use colored::Colorize;
+    println!();
+    println!(
+        "  {} {}",
+        "▶ Now playing:".green().bold(),
+        video.title.bold()
+    );
+    println!(
+        "  {} {}",
+        "🎵 Channel:".dimmed(),
+        video.channel.as_deref().unwrap_or("Unknown").dimmed()
+    );
+    println!(
+        "  {} pause  {} seek±10s  {} seek±30s  {} vol  {} speed  {} repeat  {} shuffle  {} fav  {} queue  {} search  {} chat  {} quit",
+        "[spc]".cyan(), "[←→]".cyan(), "[⇧←→]".cyan(), "[↑↓]".cyan(),
+        "[+/-]".cyan(), "[r]".cyan(), "[x]".cyan(), "[f]".cyan(),
+        "[a]".cyan(), "[s]".cyan(), "[c]".cyan(), "[q]".cyan(),
+    );
+    println!();
 }
 
 // ─── Chat ────────────────────────────────────────────────────
@@ -1033,6 +1060,7 @@ async fn run_tui(_config: &Config, db: &Database) -> Result<()> {
                                     view_count: None,
                                     thumbnail: None,
                                     url: entry.url.clone(),
+                                    description: None,
                                 };
 
                                 match yt.get_stream_url(&entry.url).await {
@@ -1118,6 +1146,7 @@ async fn run_tui(_config: &Config, db: &Database) -> Result<()> {
                                                 view_count: None,
                                                 thumbnail: None,
                                                 url: entry.url.clone(),
+                                                description: None,
                                             };
                                             let state = crate::player::state::StateFile::new(fake_video.clone(), false);
                                             state.write().ok();

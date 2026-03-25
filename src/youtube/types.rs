@@ -14,6 +14,9 @@ pub struct VideoInfo {
     #[serde(default)]
     pub thumbnail: Option<String>,
     pub url: String,
+    /// Video description — used as fallback when no subtitles are available.
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 impl fmt::Display for VideoInfo {

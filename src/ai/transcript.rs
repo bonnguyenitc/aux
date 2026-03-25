@@ -150,48 +150,72 @@ fn dedup_segments(segments: Vec<TranscriptSegment>) -> Vec<TranscriptSegment> {
     result
 }
 
-/// Fetch transcript for a YouTube video using yt-dlp
+/// Fetch transcript for a YouTube video.
+///
+/// Tries three strategies in order:
+/// 1. Manual subtitles (uploaded by creator) — highest quality
+/// 2. Auto-generated subtitles — ASR, usually available
+/// 3. Video description fallback — always available, lower quality
+///
+/// Returns `Ok(None)` only if all three strategies produce nothing.
 pub async fn fetch_transcript(video_url: &str) -> Result<Option<Transcript>> {
-    // Create temp dir for subtitle files
+    // ── Tier 1 & 2: VTT subtitles via yt-dlp ────────────────────────────
+    if let Some(t) = fetch_vtt_transcript(video_url).await? {
+        return Ok(Some(t));
+    }
+
+    // ── Tier 3: description as pseudo-transcript ─────────────────────────
+    if let Some(t) = fetch_description_transcript(video_url).await {
+        return Ok(Some(t));
+    }
+
+    Ok(None)
+}
+
+/// Try to fetch VTT subtitles: manual first, then auto-generated.
+async fn fetch_vtt_transcript(video_url: &str) -> Result<Option<Transcript>> {
     let temp_dir = std::env::temp_dir().join("duet-subs");
-    std::fs::create_dir_all(&temp_dir)?;
+    // Use tokio::fs so we don't block the executor
+    tokio::fs::create_dir_all(&temp_dir).await?;
 
     let output_template = temp_dir.join("sub");
+    let output_template_str = output_template.to_str().unwrap_or("sub").to_string();
 
-    // Try to get auto-subtitles
+    // Strategy A: manual subtitles (preferred)
+    // Strategy B: auto-generated (fallback)
+    // We run both in one yt-dlp call with --write-sub --write-auto-sub;
+    // yt-dlp writes manual if present, auto otherwise.
     let output = Command::new("yt-dlp")
         .args([
+            "--write-sub",
             "--write-auto-sub",
-            "--sub-lang",
-            "en,vi",
-            "--sub-format",
-            "vtt",
+            "--sub-lang", "en,vi",
+            "--sub-format", "vtt",
             "--skip-download",
             "--no-warnings",
-            "-o",
-            output_template.to_str().unwrap_or("sub"),
+            "-o", &output_template_str,
             video_url,
         ])
         .current_dir(&temp_dir)
         .output()
         .await
-        .context("Failed to fetch subtitles")?;
+        .context("Failed to invoke yt-dlp for subtitles")?;
 
+    // Non-zero exit just means no subs exist — not a hard error
     if !output.status.success() {
-        // Not an error — many videos don't have subtitles
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
         return Ok(None);
     }
 
     // Find the generated .vtt file
-    let mut vtt_content = None;
+    let mut vtt_content: Option<String> = None;
     let mut lang = String::from("en");
 
-    if let Ok(entries) = std::fs::read_dir(&temp_dir) {
-        for entry in entries.flatten() {
+    if let Ok(mut entries) = tokio::fs::read_dir(&temp_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
             if path.extension().map_or(false, |e| e == "vtt") {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    // Extract language from filename (e.g., sub.en.vtt)
+                if let Ok(content) = tokio::fs::read_to_string(&path).await {
                     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                         if let Some(l) = stem.rsplit('.').next() {
                             lang = l.to_string();
@@ -204,8 +228,7 @@ pub async fn fetch_transcript(video_url: &str) -> Result<Option<Transcript>> {
         }
     }
 
-    // Cleanup temp files
-    let _ = std::fs::remove_dir_all(&temp_dir);
+    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
 
     match vtt_content {
         Some(content) => {
@@ -213,14 +236,47 @@ pub async fn fetch_transcript(video_url: &str) -> Result<Option<Transcript>> {
             if segments.is_empty() {
                 Ok(None)
             } else {
-                Ok(Some(Transcript {
-                    language: lang,
-                    segments,
-                }))
+                Ok(Some(Transcript { language: lang, segments }))
             }
         }
         None => Ok(None),
     }
+}
+
+/// Fetch video description via yt-dlp and turn it into a single-segment
+/// pseudo-transcript.  Returns `None` if the description is absent/empty.
+async fn fetch_description_transcript(video_url: &str) -> Option<Transcript> {
+    let output = Command::new("yt-dlp")
+        .args([
+            "--print", "description",
+            "--no-warnings",
+            "--skip-download",
+            video_url,
+        ])
+        .output()
+        .await
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let description = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    if description.is_empty() || description == "NA" {
+        return None;
+    }
+
+    // Wrap the whole description as one segment spanning the whole video.
+    // Duration 0→∞ is represented by a large sentinel value.
+    Some(Transcript {
+        language: "description".to_string(),
+        segments: vec![TranscriptSegment {
+            start: Duration::ZERO,
+            end: Duration::from_secs(u32::MAX as u64),
+            text: description,
+        }],
+    })
 }
 
 #[derive(Debug, Deserialize)]
