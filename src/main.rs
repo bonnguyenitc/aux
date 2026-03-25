@@ -1363,6 +1363,45 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
 
                 let mut handled = false;
 
+                // ── Playlist picker modal (takes priority over everything) ────
+                if app.playlist_picker.is_some() {
+                    match code {
+                        KeyCode::Esc => {
+                            app.close_playlist_picker();
+                            app.set_status("Cancelled");
+                        }
+                        KeyCode::Up => { app.picker_prev(); }
+                        KeyCode::Down => { app.picker_next(); }
+                        KeyCode::Enter => {
+                            // Clone needed data out of the picker before mutating
+                            let (video, playlist_name) = {
+                                let pk = app.playlist_picker.as_ref().unwrap();
+                                if let Some(pl) = pk.playlists.get(pk.selected) {
+                                    (pk.video.clone(), Some(pl.name.clone()))
+                                } else {
+                                    (pk.video.clone(), None)
+                                }
+                            };
+                            if let Some(name) = playlist_name {
+                                match library::playlist::add_to_playlist(db, &name, &video) {
+                                    Ok(true) => {
+                                        app.set_status(format!("✅ Added to '{}'", name));
+                                    }
+                                    Ok(false) => {
+                                        app.set_status(format!("⚠ Already in '{}'", name));
+                                    }
+                                    Err(e) => {
+                                        app.set_status(format!("Error: {}", e));
+                                    }
+                                }
+                            }
+                            app.close_playlist_picker();
+                        }
+                        _ => {}
+                    }
+                    continue; // Skip all other input handling
+                }
+
                 match app.panel {
                     Panel::Search => match code {
                         KeyCode::Esc => {
@@ -1538,6 +1577,16 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 }
                             }
                         }
+                        KeyCode::Char('l') => {
+                            if let Some(video) = app.search_results.get(app.selected_index).cloned() {
+                                let playlists = library::playlist::list_playlists(db).unwrap_or_default();
+                                if playlists.is_empty() {
+                                    app.set_status("No playlists. Go to Playlists tab → [n] to create one");
+                                } else {
+                                    app.open_playlist_picker(video, playlists);
+                                }
+                            }
+                        }
                         KeyCode::Char('/') => {
                             app.set_panel(Panel::Search);
                             app.search_input.clear();
@@ -1693,6 +1742,22 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 }
                             }
                         }
+                        KeyCode::Char('l') => {
+                            if let Some(entry) = app.queue_items.get(app.selected_index).cloned() {
+                                let video = crate::youtube::VideoInfo {
+                                    id: entry.video_id, title: entry.title,
+                                    channel: entry.channel, url: entry.url,
+                                    duration: entry.duration_secs.map(|d| d as f64),
+                                    view_count: None, thumbnail: None, description: None,
+                                };
+                                let playlists = library::playlist::list_playlists(db).unwrap_or_default();
+                                if playlists.is_empty() {
+                                    app.set_status("No playlists. Go to Playlists tab → [n] to create one");
+                                } else {
+                                    app.open_playlist_picker(video, playlists);
+                                }
+                            }
+                        }
                         _ => { handled = false; }
                     }},
 
@@ -1798,6 +1863,22 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 }
                             }
                         }
+                        KeyCode::Char('l') => {
+                            if let Some(entry) = app.fav_items.get(app.selected_index).cloned() {
+                                let video = crate::youtube::VideoInfo {
+                                    id: entry.video_id, title: entry.title,
+                                    channel: entry.channel, url: entry.url,
+                                    duration: entry.duration_secs.map(|d| d as f64),
+                                    view_count: None, thumbnail: None, description: None,
+                                };
+                                let playlists = library::playlist::list_playlists(db).unwrap_or_default();
+                                if playlists.is_empty() {
+                                    app.set_status("No playlists. Go to Playlists tab → [n] to create one");
+                                } else {
+                                    app.open_playlist_picker(video, playlists);
+                                }
+                            }
+                        }
                         _ => { handled = false; }
                     }},
 
@@ -1877,6 +1958,22 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 }
                             }
                         }
+                        KeyCode::Char('l') => {
+                            if let Some(entry) = app.history_items.get(app.selected_index).cloned() {
+                                let video = crate::youtube::VideoInfo {
+                                    id: entry.video_id, title: entry.title,
+                                    channel: entry.channel, url: entry.url,
+                                    duration: entry.duration_secs.map(|d| d as f64),
+                                    view_count: None, thumbnail: None, description: None,
+                                };
+                                let playlists = library::playlist::list_playlists(db).unwrap_or_default();
+                                if playlists.is_empty() {
+                                    app.set_status("No playlists. Go to Playlists tab → [n] to create one");
+                                } else {
+                                    app.open_playlist_picker(video, playlists);
+                                }
+                            }
+                        }
                         _ => { handled = false; }
                     }},
 
@@ -1933,49 +2030,77 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         KeyCode::Enter => {
                             if app.playlist_items_view.is_some() {
                                 // Play selected item from playlist items view
-                                if let Some((_, ref items)) = app.playlist_items_view {
-                                    if let Some(item) = items.get(app.selected_index).cloned() {
-                                        app.set_status(format!("Loading: {}...", item.title));
-                                        terminal.draw(|f| ui::draw(f, &app))?;
-                                        match yt.get_stream_url(&item.url).await {
-                                            Ok(stream) => {
-                                                if let Some(mut old) = player.take() { old.stop().await.ok(); }
-                                                let mut p = MpvPlayer::new();
-                                                if p.play(&stream.audio_url, &item.title).await.is_ok() {
-                                                    let video = crate::youtube::VideoInfo {
-                                                        id: item.video_id.clone(),
-                                                        title: item.title.clone(),
-                                                        channel: item.channel.clone(),
-                                                        url: item.url.clone(),
-                                                        duration: item.duration_secs.map(|d| d as f64),
-                                                        view_count: None,
-                                                        thumbnail: None,
-                                                        description: None,
+                                // Clone out the items + selected index before mutating
+                                let play_info = app.playlist_items_view.as_ref().and_then(|(_, items)| {
+                                    items.get(app.selected_index).cloned().map(|item| {
+                                        let remaining: Vec<_> = items.iter().skip(app.selected_index + 1).cloned().collect();
+                                        (item, remaining)
+                                    })
+                                });
+                                if let Some((item, remaining_items)) = play_info {
+                                    app.set_status(format!("Loading: {}...", item.title));
+                                    terminal.draw(|f| ui::draw(f, &app))?;
+                                    match yt.get_stream_url(&item.url).await {
+                                        Ok(stream) => {
+                                            if let Some(mut old) = player.take() { old.stop().await.ok(); }
+                                            let mut p = MpvPlayer::new();
+                                            if p.play(&stream.audio_url, &item.title).await.is_ok() {
+                                                let video = crate::youtube::VideoInfo {
+                                                    id: item.video_id.clone(),
+                                                    title: item.title.clone(),
+                                                    channel: item.channel.clone(),
+                                                    url: item.url.clone(),
+                                                    duration: item.duration_secs.map(|d| d as f64),
+                                                    view_count: None,
+                                                    thumbnail: None,
+                                                    description: None,
+                                                };
+                                                let state = crate::player::state::StateFile::new(video.clone(), false);
+                                                state.write().ok();
+                                                app.now_playing = Some(NowPlaying {
+                                                    video: video.clone(),
+                                                    position_secs: 0,
+                                                    duration_secs: item.duration_secs.unwrap_or(0) as u64,
+                                                    paused: false,
+                                                    volume: 80,
+                                                    speed: 1.0,
+                                                    repeat: crate::player::RepeatMode::Off,
+                                                    shuffle: false,
+                                                    is_fav: false,
+                                                    in_queue: false,
+                                                    sleep_deadline: None,
+                                                });
+                                                player = Some(p);
+                                                let transcript = fetch_transcript(&item.url).await.unwrap_or(None);
+                                                ai_context = Some(VideoContext::new(video, transcript.clone()));
+                                                app.transcript = transcript;
+
+                                                // Queue remaining playlist items after the selected one
+                                                library::queue::clear_queue(db).ok();
+                                                let mut queued = 0usize;
+                                                for ri in &remaining_items {
+                                                    let rv = crate::youtube::VideoInfo {
+                                                        id: ri.video_id.clone(),
+                                                        title: ri.title.clone(),
+                                                        channel: ri.channel.clone(),
+                                                        url: ri.url.clone(),
+                                                        duration: ri.duration_secs.map(|d| d as f64),
+                                                        view_count: None, thumbnail: None, description: None,
                                                     };
-                                                    let state = crate::player::state::StateFile::new(video.clone(), false);
-                                                    state.write().ok();
-                                                    app.now_playing = Some(NowPlaying {
-                                                        video: video.clone(),
-                                                        position_secs: 0,
-                                                        duration_secs: item.duration_secs.unwrap_or(0) as u64,
-                                                        paused: false,
-                                                        volume: 80,
-                                                        speed: 1.0,
-                                                        repeat: crate::player::RepeatMode::Off,
-                                                        shuffle: false,
-                                                        is_fav: false,
-                                                        in_queue: false,
-                                                        sleep_deadline: None,
-                                                    });
-                                                    player = Some(p);
-                                                    let transcript = fetch_transcript(&item.url).await.unwrap_or(None);
-                                                    ai_context = Some(VideoContext::new(video, transcript.clone()));
-                                                    app.transcript = transcript;
+                                                    if library::queue::add_to_queue(db, &rv).unwrap_or(false) {
+                                                        queued += 1;
+                                                    }
+                                                }
+                                                app.queue_items = library::queue::get_queue(db).unwrap_or_default();
+
+                                                if queued > 0 {
+                                                    app.set_status(format!("▶ {} · {} more queued", item.title, queued));
+                                                } else {
                                                     app.set_status(format!("Playing: {}", item.title));
                                                 }
                                             }
-                                            Err(e) => { app.set_status(format!("Failed: {}", e)); }
                                         }
+                                        Err(e) => { app.set_status(format!("Failed: {}", e)); }
                                     }
                                 }
                             } else {
@@ -2047,6 +2172,30 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         KeyCode::Char('n') if app.playlist_items_view.is_none() => {
                             app.playlist_name_input = Some(String::new());
                             app.set_status("Enter a name for the new playlist");
+                        }
+                        // Delete item from playlist (detail view)
+                        KeyCode::Char('d') if app.playlist_items_view.is_some() => {
+                            // Clone out the info we need
+                            let info = app.playlist_items_view.as_ref().and_then(|(name, items)| {
+                                items.get(app.selected_index).map(|item| (name.clone(), item.video_id.clone(), item.title.clone()))
+                            });
+                            if let Some((pl_name, vid, title)) = info {
+                                match library::playlist::remove_from_playlist(db, &pl_name, &vid) {
+                                    Ok(true) => {
+                                        // Reload items
+                                        let items = library::playlist::get_playlist_items(db, &pl_name).unwrap_or_default();
+                                        if app.selected_index >= items.len() && !items.is_empty() {
+                                            app.selected_index = items.len() - 1;
+                                        } else if items.is_empty() {
+                                            app.selected_index = 0;
+                                        }
+                                        app.playlist_items_view = Some((pl_name, items));
+                                        app.set_status(format!("🗑 Removed: {}", title));
+                                    }
+                                    Ok(false) => app.set_status("Item not found"),
+                                    Err(e) => app.set_status(format!("Error: {}", e)),
+                                }
+                            }
                         }
                         // Delete playlist: d (only in list view)
                         KeyCode::Char('d') if app.playlist_items_view.is_none() => {
@@ -2129,9 +2278,20 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                     },
 
                     Panel::Help => {
-                        // Any key goes back
-                        app.set_panel(Panel::Search);
                         handled = true;
+                        match code {
+                            KeyCode::Esc | KeyCode::Char('q') => {
+                                app.help_scroll = 0;
+                                app.set_panel(Panel::Search);
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                app.help_scroll = app.help_scroll.saturating_sub(1);
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                app.help_scroll = app.help_scroll.saturating_add(1);
+                            }
+                            _ => {}
+                        }
                     }
                 }
 

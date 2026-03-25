@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use crate::ai::chat::ChatMessage;
 use crate::ai::transcript::Transcript;
 use crate::library::favorites::FavoriteEntry;
+use crate::library::playlist::Playlist;
 use crate::player::types::RepeatMode;
 use crate::youtube::VideoInfo;
 
@@ -90,6 +91,21 @@ pub struct App {
     pub playlist_items_view: Option<(String, Vec<crate::library::playlist::PlaylistItem>)>,
     /// When Some, the user is typing a new playlist name
     pub playlist_name_input: Option<String>,
+    // ── Playlist picker ("add to playlist" popup) ────────────────
+    pub playlist_picker: Option<PlaylistPicker>,
+    // ── Help scroll ─────────────────────────────────────────
+    pub help_scroll: u16,
+}
+
+/// Popup state: user is choosing which playlist to add a video to
+#[derive(Debug, Clone)]
+pub struct PlaylistPicker {
+    /// The video to add
+    pub video: VideoInfo,
+    /// Available playlists to pick from
+    pub playlists: Vec<Playlist>,
+    /// Currently highlighted index
+    pub selected: usize,
 }
 
 impl App {
@@ -122,6 +138,8 @@ impl App {
             playlist_list: Vec::new(),
             playlist_items_view: None,
             playlist_name_input: None,
+            playlist_picker: None,
+            help_scroll: 0,
         }
     }
 
@@ -288,5 +306,39 @@ impl App {
             np.shuffle = shuffle;
             np.sleep_deadline = sleep_deadline;
         }
+    }
+
+    // ── Playlist picker helpers ─────────────────────────────────────
+
+    /// Open the "add to playlist" popup for a given video.
+    pub fn open_playlist_picker(&mut self, video: VideoInfo, playlists: Vec<Playlist>) {
+        self.playlist_picker = Some(PlaylistPicker {
+            video,
+            playlists,
+            selected: 0,
+        });
+    }
+
+    /// Move selection up in the picker
+    pub fn picker_prev(&mut self) {
+        if let Some(ref mut pk) = self.playlist_picker {
+            if pk.selected > 0 {
+                pk.selected -= 1;
+            }
+        }
+    }
+
+    /// Move selection down in the picker
+    pub fn picker_next(&mut self) {
+        if let Some(ref mut pk) = self.playlist_picker {
+            if pk.selected + 1 < pk.playlists.len() {
+                pk.selected += 1;
+            }
+        }
+    }
+
+    /// Close the picker popup
+    pub fn close_playlist_picker(&mut self) {
+        self.playlist_picker = None;
     }
 }

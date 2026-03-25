@@ -3,7 +3,7 @@ use ratatui::{
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Cell, Paragraph, Row,
+        Block, BorderType, Borders, Cell, Clear, Paragraph, Row,
         Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Tabs,
     },
     Frame,
@@ -43,6 +43,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
     draw_body(frame, chunks[1], app);
     draw_now_playing_bar(frame, chunks[2], app);
     draw_keybind_bar(frame, chunks[3], app);
+
+    // ── Modal overlay: playlist picker ──────────────────────────────
+    if app.playlist_picker.is_some() {
+        draw_playlist_picker(frame, area, app);
+    }
 }
 
 // ── Header / Tabs ──────────────────────────────────────────────────────────
@@ -106,7 +111,80 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
         Panel::History => draw_history(frame, area, app),
         Panel::Playlists => draw_playlists(frame, area, app),
         Panel::Chat => draw_chat(frame, area, app),
-        Panel::Help => draw_help(frame, area),
+        Panel::Help => draw_help(frame, area, app),
+    }
+}
+
+// ── Playlist picker popup (overlay) ─────────────────────────────────────────
+
+fn draw_playlist_picker(frame: &mut Frame, area: Rect, app: &App) {
+    let picker = match app.playlist_picker {
+        Some(ref pk) => pk,
+        None => return,
+    };
+
+    // Center popup: 50 wide, min(playlists+4, 60% of screen) tall
+    let popup_w = 50u16.min(area.width.saturating_sub(4));
+    let popup_h = (picker.playlists.len() as u16 + 5).min(area.height * 60 / 100).max(6);
+    let x = (area.width.saturating_sub(popup_w)) / 2;
+    let y = (area.height.saturating_sub(popup_h)) / 2;
+    let popup_area = Rect::new(x, y, popup_w, popup_h);
+
+    // Clear the area behind the popup
+    frame.render_widget(Clear, popup_area);
+
+    // Truncate video title for the block title
+    let max_title = (popup_w as usize).saturating_sub(20);
+    let vtitle: String = picker.video.title.chars().take(max_title).collect();
+    let title = format!(" \u{1F3A7} Add \u{201C}{}\u{201D} to playlist ", vtitle);
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(BRAND))
+        .style(Style::default().bg(Color::Rgb(18, 18, 28)));
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    if picker.playlists.is_empty() {
+        let msg = Paragraph::new("  No playlists yet. Create one in the Playlists tab ([n]).")
+            .style(Style::default().fg(DIM));
+        frame.render_widget(msg, inner);
+        return;
+    }
+
+    // Render playlist rows
+    let rows: Vec<Row> = picker.playlists.iter().enumerate().map(|(i, pl)| {
+        let sel = i == picker.selected;
+        let prefix = if sel { "▸ " } else { "  " };
+        let style = if sel {
+            Style::default().fg(BRAND).bg(SURFACE).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(TEXT)
+        };
+        Row::new(vec![
+            Cell::from(format!("{}{}", prefix, pl.name)),
+            Cell::from(format!("{} tracks", pl.item_count)),
+        ]).style(style)
+    }).collect();
+
+    let table = Table::new(
+        rows,
+        [Constraint::Percentage(70), Constraint::Percentage(30)],
+    )
+    .row_highlight_style(Style::default().fg(BRAND));
+
+    frame.render_widget(table, inner);
+
+    // Footer hint
+    let footer_y = popup_area.y + popup_area.height - 1;
+    if footer_y < area.height {
+        let hint = Paragraph::new(" [↑↓] select  [Enter] add  [Esc] cancel ")
+            .style(Style::default().fg(DIM));
+        let footer_area = Rect::new(popup_area.x + 1, footer_y, popup_w - 2, 1);
+        frame.render_widget(hint, footer_area);
     }
 }
 
@@ -848,9 +926,9 @@ fn draw_chat(frame: &mut Frame, area: Rect, app: &App) {
 
     // ── Input area ───────────────────────────────────────────
     let input_widget = Paragraph::new(Line::from(vec![
-        Span::styled("💬 ", Style::default()),
+        Span::styled("\u{1F4AC} ", Style::default()),
         Span::styled(&app.chat_input, Style::default().fg(TEXT).bold()),
-        Span::styled("▌", Style::default().fg(ACCENT)),
+        Span::styled("\u{258C}", Style::default().fg(ACCENT)),
     ]))
     .block(
         Block::default()
@@ -865,7 +943,7 @@ fn draw_chat(frame: &mut Frame, area: Rect, app: &App) {
 
 // ── Help panel ─────────────────────────────────────────────────────────────
 
-fn draw_help(frame: &mut Frame, area: Rect) {
+fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
     let lines = vec![
         Line::from(""),
         Line::from(vec![Span::styled(
@@ -873,13 +951,13 @@ fn draw_help(frame: &mut Frame, area: Rect) {
             Style::default().fg(BRAND).bold(),
         )]),
         Line::from(""),
-        help_row("Tab", "Cycle panels: Search→Results→Lyrics→Queue→Favs→History→Playlists→Chat→Help"),
+        help_row("Tab", "Cycle panels"),
         help_row("/", "New search"),
         help_row("Enter", "Play / confirm / select"),
-        help_row("↑ ↓ / j k", "Navigate list items"),
-        help_row("← →", "Page prev / next (Results panel)"),
+        help_row("\u{2191} \u{2193} / j k", "Navigate list items"),
+        help_row("\u{2190} \u{2192}", "Page prev / next (Results panel)"),
         help_row("Esc", "Back / close sub-view"),
-        help_row("q", "Back / quit (not in Chat/Search — those type 'q')"),
+        help_row("q", "Back / quit"),
         help_row("?", "This help screen"),
         Line::from(""),
         Line::from(vec![Span::styled(
@@ -888,26 +966,27 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         )]),
         Line::from(""),
         help_row("Space", "Pause / Resume"),
-        help_row("← →", "Seek ±10s (non-list panels)"),
-        help_row("Shift+← →", "Seek ±60s (any panel)"),
-        help_row("+ / - (or =)", "Volume ±5%"),
-        help_row("] / [", "Speed up / down (0.25x–4.0x)"),
+        help_row("\u{2190} \u{2192}", "Seek \u{00B1}10s (non-list panels)"),
+        help_row("Shift+\u{2190} \u{2192}", "Seek \u{00B1}60s (any panel)"),
+        help_row("+ / - (or =)", "Volume \u{00B1}5%"),
+        help_row("] / [", "Speed up / down (0.25x\u{2013}4.0x)"),
         help_row("n", "Skip to next track"),
         help_row("p", "Restart / previous track"),
-        help_row("r", "Cycle repeat (off → one → all)"),
-        help_row("z", "Toggle shuffle 🔀"),
-        help_row("f", "Toggle favorite ❤️"),
-        help_row("a", "Add/remove current track to queue 📋"),
+        help_row("r", "Cycle repeat (off \u{2192} one \u{2192} all)"),
+        help_row("z", "Toggle shuffle"),
+        help_row("f", "Toggle favorite"),
+        help_row("a", "Add/remove current track to queue"),
+        help_row("l", "Add selected video to playlist"),
         help_row("S", "Stop playback"),
-        help_row("t", "Sleep timer (15m → 30m → 1h → 2h → off) 😴"),
-        help_row("e", "Cycle equalizer (flat→bass→vocal→treble→loudness) 🎛️"),
+        help_row("t", "Sleep timer (15m \u{2192} 30m \u{2192} 1h \u{2192} 2h \u{2192} off)"),
+        help_row("e", "Cycle equalizer"),
         Line::from(""),
         Line::from(vec![Span::styled(
             "  Lyrics Panel",
             Style::default().fg(ACCENT).bold(),
         )]),
         Line::from(""),
-        help_row("Shift+↑ ↓", "Scroll lyrics manually"),
+        help_row("Shift+\u{2191} \u{2193}", "Scroll lyrics manually"),
         help_row("0", "Reset auto-scroll"),
         Line::from(""),
         Line::from(vec![Span::styled(
@@ -915,9 +994,10 @@ fn draw_help(frame: &mut Frame, area: Rect) {
             Style::default().fg(ACCENT).bold(),
         )]),
         Line::from(""),
-        help_row("Enter", "View playlist items (list) / Play item (detail)"),
+        help_row("Enter", "View playlist items / Play item"),
         help_row("n", "Create new playlist"),
-        help_row("d", "Delete selected playlist"),
+        help_row("d", "Delete playlist / Remove item"),
+        help_row("l", "Add selected video to playlist"),
         help_row("p", "Play entire playlist (load to queue)"),
         help_row("Esc", "Back to list / back to Search"),
         Line::from(""),
@@ -927,19 +1007,38 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         )]),
         Line::from(""),
         help_row("Enter", "Send message to AI"),
-        help_row("↑ / ↓", "Scroll chat history"),
+        help_row("\u{2191} / \u{2193}", "Scroll chat history"),
         help_row("Esc", "Back to Search"),
+        Line::from(""),
     ];
 
-    let help = Paragraph::new(lines).block(
-        Block::default()
-            .title(" Help ")
-            .title_style(Style::default().fg(BRAND).bold())
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(DIM)),
-    );
+    let total_lines = lines.len() as u16;
+
+    let help = Paragraph::new(lines)
+        .scroll((app.help_scroll, 0))
+        .block(
+            Block::default()
+                .title(" Help \u{2014} [\u{2191}\u{2193}] scroll  [Esc] back ")
+                .title_style(Style::default().fg(BRAND).bold())
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(DIM)),
+        );
     frame.render_widget(help, area);
+
+    // Scrollbar
+    let content_h = area.height.saturating_sub(2);
+    if total_lines > content_h {
+        let mut sb_state = ScrollbarState::new(total_lines.saturating_sub(content_h) as usize)
+            .position(app.help_scroll as usize);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .thumb_style(Style::default().fg(BRAND))
+                .track_style(Style::default().fg(DIM)),
+            area,
+            &mut sb_state,
+        );
+    }
 }
 
 fn help_row<'a>(key: &'a str, desc: &'a str) -> Line<'a> {
@@ -1092,14 +1191,20 @@ fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
 
     let panel_keys: Vec<(&str, &str)> = match app.panel {
         Panel::Search    => vec![("Enter", "search"), ("Tab", "panels"), ("?", "help"), ("q", "quit")],
-        Panel::Results   => vec![("Enter", "play"), ("↑↓", "nav"), ("←→", "page"), ("a", "queue"), ("f", "fav"), ("Tab", "panel")],
+        Panel::Results   => vec![("Enter", "play"), ("↑↓", "nav"), ("←→", "page"), ("a", "queue"), ("f", "fav"), ("l", "playlist"), ("Tab", "panel")],
         Panel::Lyrics    => vec![("⇧↑↓", "scroll"), ("0", "auto"), ("Tab", "panel"), ("Esc", "back")],
-        Panel::Queue     => vec![("Enter", "play"), ("↑↓", "nav"), ("d", "remove"), ("Tab", "panel")],
-        Panel::Favorites => vec![("Enter", "play"), ("↑↓", "nav"), ("d", "unfav"), ("Tab", "panel")],
-        Panel::History   => vec![("Enter", "replay"), ("↑↓", "nav"), ("Tab", "panel")],
-        Panel::Playlists => vec![("Enter", "view"), ("↑↓", "nav"), ("n", "new"), ("d", "del"), ("p", "play")],
+        Panel::Queue     => vec![("Enter", "play"), ("↑↓", "nav"), ("d", "remove"), ("l", "playlist"), ("Tab", "panel")],
+        Panel::Favorites => vec![("Enter", "play"), ("↑↓", "nav"), ("d", "unfav"), ("l", "playlist"), ("Tab", "panel")],
+        Panel::History   => vec![("Enter", "replay"), ("↑↓", "nav"), ("l", "playlist"), ("Tab", "panel")],
+        Panel::Playlists => {
+            if app.playlist_items_view.is_some() {
+                vec![("Enter", "play"), ("↑↓", "nav"), ("d", "remove"), ("Esc", "back")]
+            } else {
+                vec![("Enter", "view"), ("↑↓", "nav"), ("n", "new"), ("d", "del"), ("p", "play")]
+            }
+        },
         Panel::Chat      => vec![("Enter", "send"), ("↑↓", "scroll"), ("Esc", "back"), ("Tab", "panel")],
-        Panel::Help      => vec![("Any", "go back")],
+        Panel::Help      => vec![("↑↓", "scroll"), ("Esc", "back")],
     };
 
     for (key, action) in &panel_keys {
