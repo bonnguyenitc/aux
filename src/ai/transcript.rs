@@ -93,7 +93,18 @@ fn parse_vtt(content: &str) -> Vec<TranscriptSegment> {
     }
 
     // Deduplicate: VTT auto-subs often repeat the same text
-    dedup_segments(segments)
+    let mut result = dedup_segments(segments);
+
+    // Fill gaps: extend each segment's end to the next segment's start
+    // so subtitles stay visible until the next line begins.
+    for i in 0..result.len().saturating_sub(1) {
+        let next_start = result[i + 1].start;
+        if next_start > result[i].end {
+            result[i].end = next_start;
+        }
+    }
+
+    result
 }
 
 /// Remove HTML/VTT tags from text
@@ -134,14 +145,19 @@ fn parse_vtt_timestamp(ts: &str) -> Option<Duration> {
     }
 }
 
-/// Deduplicate consecutive segments with the same text
+/// Deduplicate consecutive segments with the same text.
+/// When duplicates are found, extend the kept segment's end time to cover the full range.
 fn dedup_segments(segments: Vec<TranscriptSegment>) -> Vec<TranscriptSegment> {
     let mut result: Vec<TranscriptSegment> = Vec::new();
 
     for seg in segments {
-        if let Some(last) = result.last() {
+        if let Some(last) = result.last_mut() {
             if last.text == seg.text {
-                continue; // skip duplicate
+                // Extend end time to cover the duplicate's range
+                if seg.end > last.end {
+                    last.end = seg.end;
+                }
+                continue;
             }
         }
         result.push(seg);
@@ -175,8 +191,6 @@ pub async fn fetch_transcript(video_url: &str) -> Result<Option<Transcript>> {
 /// Try to fetch VTT subtitles: manual first, then auto-generated.
 async fn fetch_vtt_transcript(video_url: &str) -> Result<Option<Transcript>> {
     let temp_dir = std::env::temp_dir().join("duet-subs");
-    // Use tokio::fs so we don't block the executor
-    tokio::fs::create_dir_all(&temp_dir).await?;
 
     let output_template = temp_dir.join("sub");
     let output_template_str = output_template.to_str().unwrap_or("sub").to_string();
@@ -185,11 +199,17 @@ async fn fetch_vtt_transcript(video_url: &str) -> Result<Option<Transcript>> {
     // Strategy B: auto-generated (fallback)
     // We run both in one yt-dlp call with --write-sub --write-auto-sub;
     // yt-dlp writes manual if present, auto otherwise.
-    let output = Command::new("yt-dlp")
+    // Auto-generated subs have lang codes like "en-en", "vi-en", so we use glob patterns.
+
+    // Clean temp dir first to avoid stale .vtt files
+    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    tokio::fs::create_dir_all(&temp_dir).await?;
+
+    let _output = Command::new("yt-dlp")
         .args([
             "--write-sub",
             "--write-auto-sub",
-            "--sub-lang", "en,vi",
+            "--sub-lang", "en.*,vi.*,en,vi",
             "--sub-format", "vtt",
             "--skip-download",
             "--no-warnings",
@@ -201,30 +221,37 @@ async fn fetch_vtt_transcript(video_url: &str) -> Result<Option<Transcript>> {
         .await
         .context("Failed to invoke yt-dlp for subtitles")?;
 
-    // Non-zero exit just means no subs exist — not a hard error
-    if !output.status.success() {
-        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-        return Ok(None);
-    }
+    // NOTE: yt-dlp may exit non-zero if ONE language fails (e.g. 429 rate limit)
+    // even when another language succeeded.  Don't bail on exit code — just
+    // check whether any .vtt files were actually written.
 
-    // Find the generated .vtt file
-    let mut vtt_content: Option<String> = None;
-    let mut lang = String::from("en");
+    // Find the generated .vtt files; prefer manual subs (short lang code like "en")
+    // over auto-generated (long code like "en-en").
+    let mut candidates: Vec<(String, std::path::PathBuf)> = Vec::new();
 
     if let Ok(mut entries) = tokio::fs::read_dir(&temp_dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
             if path.extension().map_or(false, |e| e == "vtt") {
-                if let Ok(content) = tokio::fs::read_to_string(&path).await {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        if let Some(l) = stem.rsplit('.').next() {
-                            lang = l.to_string();
-                        }
-                    }
-                    vtt_content = Some(content);
-                    break;
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    let l = stem.rsplit('.').next().unwrap_or("en").to_string();
+                    candidates.push((l, path));
                 }
             }
+        }
+    }
+
+    // Sort: shorter lang codes first (manual "en" before auto "en-en")
+    candidates.sort_by_key(|(l, _)| l.len());
+
+    let mut vtt_content: Option<String> = None;
+    let mut lang = String::from("en");
+
+    for (l, path) in &candidates {
+        if let Ok(content) = tokio::fs::read_to_string(path).await {
+            lang = l.clone();
+            vtt_content = Some(content);
+            break;
         }
     }
 

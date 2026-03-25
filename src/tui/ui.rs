@@ -60,15 +60,16 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(brand, layout[0]);
 
     // Tabs
-    let tab_titles = vec!["Search", "Results", "Queue", "Favs", "History", "Chat", "Help"];
+    let tab_titles = vec!["Search", "Results", "Lyrics", "Queue", "Favs", "History", "Chat", "Help"];
     let selected = match app.panel {
         Panel::Search => 0,
         Panel::Results => 1,
-        Panel::Queue => 2,
-        Panel::Favorites => 3,
-        Panel::History => 4,
-        Panel::Chat => 5,
-        Panel::Help => 6,
+        Panel::Lyrics => 2,
+        Panel::Queue => 3,
+        Panel::Favorites => 4,
+        Panel::History => 5,
+        Panel::Chat => 6,
+        Panel::Help => 7,
     };
 
     let tabs = Tabs::new(tab_titles)
@@ -91,6 +92,7 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
     match app.panel {
         Panel::Search => draw_search(frame, area, app),
         Panel::Results => draw_results(frame, area, app),
+        Panel::Lyrics => draw_lyrics(frame, area, app),
         Panel::Queue => draw_queue(frame, area, app),
         Panel::Favorites => draw_favorites(frame, area, app),
         Panel::History => draw_history(frame, area, app),
@@ -234,6 +236,133 @@ fn draw_results(frame: &mut Frame, area: Rect, app: &App) {
             .border_style(Style::default().fg(DIM)),
     );
     frame.render_widget(list, area);
+}
+
+// ── Lyrics panel ─────────────────────────────────────────────────────────────
+
+fn draw_lyrics(frame: &mut Frame, area: Rect, app: &App) {
+    let transcript = match &app.transcript {
+        Some(t) if !t.segments.is_empty() => t,
+        _ => {
+            // Empty state
+            let empty = Paragraph::new(vec![
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "  No transcript available.",
+                    Style::default().fg(DIM),
+                )]),
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "  Try asking the AI in Chat! 💬",
+                    Style::default().fg(ACCENT),
+                )]),
+            ])
+            .block(
+                Block::default()
+                    .title(" Lyrics 🎵 ")
+                    .title_style(Style::default().fg(ACCENT).bold())
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(DIM)),
+            );
+            frame.render_widget(empty, area);
+            return;
+        }
+    };
+
+    // Description fallback: show as plain text block
+    if transcript.language == "description" {
+        let text = transcript.segments.first().map(|s| s.text.as_str()).unwrap_or("");
+        let widget = Paragraph::new(text)
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .scroll((app.lyrics_scroll, 0))
+            .block(
+                Block::default()
+                    .title(" Description 📄 (no subtitles) ")
+                    .title_style(Style::default().fg(WARN).bold())
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(DIM)),
+            );
+        frame.render_widget(widget, area);
+        return;
+    }
+
+    let pos_secs = app.now_playing.as_ref().map(|np| np.position_secs).unwrap_or(0);
+
+    // Build lines with timestamp + text, color-coded by position
+    let mut lines: Vec<Line> = Vec::with_capacity(transcript.segments.len() + 2);
+    let mut current_line_idx: usize = 0;
+
+    for (i, seg) in transcript.segments.iter().enumerate() {
+        let seg_start = seg.start.as_secs();
+        // Use ceiling for end time to avoid gaps at fractional second boundaries
+        let seg_end = (seg.end.as_millis() as u64 + 999) / 1000; // ceil
+        let is_current = pos_secs >= seg_start && pos_secs < seg_end;
+        let is_past = pos_secs >= seg_end;
+
+        if is_current {
+            current_line_idx = i;
+        }
+
+        let timestamp = format!("  [{:02}:{:02}] ", seg_start / 60, seg_start % 60);
+
+        let (ts_style, text_style) = if is_current {
+            (
+                Style::default().fg(BRAND).bold(),
+                Style::default().fg(BRAND).bold(),
+            )
+        } else if is_past {
+            (
+                Style::default().fg(DIM),
+                Style::default().fg(DIM),
+            )
+        } else {
+            (
+                Style::default().fg(DIM),
+                Style::default().fg(TEXT),
+            )
+        };
+
+        let prefix = if is_current { "▶ " } else { "  " };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, if is_current { Style::default().fg(BRAND) } else { Style::default() }),
+            Span::styled(timestamp, ts_style),
+            Span::styled(&seg.text, text_style),
+        ]));
+    }
+
+    // Compute scroll position
+    let visible_h = area.height.saturating_sub(2) as usize; // -2 for borders
+    let scroll = if app.lyrics_auto_scroll {
+        // Auto-scroll: center current segment
+        if current_line_idx >= visible_h / 2 {
+            (current_line_idx - visible_h / 2) as u16
+        } else {
+            0
+        }
+    } else {
+        app.lyrics_scroll
+    };
+
+    let title = if app.lyrics_auto_scroll {
+        format!(" Lyrics 🎵 ({} segments) · auto ", transcript.segments.len())
+    } else {
+        format!(" Lyrics 🎵 ({} segments) · manual ", transcript.segments.len())
+    };
+
+    let widget = Paragraph::new(lines)
+        .scroll((scroll, 0))
+        .block(
+            Block::default()
+                .title(title)
+                .title_style(Style::default().fg(ACCENT).bold())
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(if app.lyrics_auto_scroll { DIM } else { ACCENT })),
+        );
+    frame.render_widget(widget, area);
 }
 
 // ── Queue panel ───────────────────────────────────────────────────────────
@@ -722,8 +851,9 @@ fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     let panel_hint = match app.panel {
-        Panel::Search  => " Enter:search  Tab:panels  ?:help  q:quit",
+        Panel::Search    => " Enter:search  Tab:panels  ?:help  q:quit",
         Panel::Results   => " Enter:play  ↑↓jk:nav  ←→:page  a:queue  f:fav  Tab:panel  Esc:back",
+        Panel::Lyrics    => " ⇧↑↓:scroll  0:auto-scroll  Tab:panel  Esc:back",
         Panel::Queue     => " Enter:play  ↑↓jk:nav  d:remove  Tab:panel",
         Panel::Favorites => " Enter:play  ↑↓jk:nav  d:unfav  Tab:panel  Esc:back",
         Panel::History   => " Enter:replay  ↑↓jk:nav  Tab:panel",

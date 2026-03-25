@@ -246,7 +246,7 @@ async fn play_video(
 
     // Enter interactive mode
     let result = loop {
-        match run_interactive(&mut player, video, db).await? {
+        match run_interactive(&mut player, video, db, ai_context.transcript.as_ref()).await? {
             InteractiveAction::Quit => {
                 player.stop().await?;
                 println!("\n  {} 👋", "Stopped.".dimmed());
@@ -962,7 +962,8 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                 if code == KeyCode::Tab {
                     let next = match app.panel {
                         Panel::Search     => Panel::Results,
-                        Panel::Results    => Panel::Queue,
+                        Panel::Results    => Panel::Lyrics,
+                        Panel::Lyrics     => Panel::Queue,
                         Panel::Queue      => Panel::Favorites,
                         Panel::Favorites  => Panel::History,
                         Panel::History    => Panel::Chat,
@@ -1111,6 +1112,9 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                             app.set_status(format!("Playing: {} — loading transcript…", video.title));
                                             terminal.draw(|f| ui::draw(f, &app))?;
                                             let transcript = fetch_transcript(&video.url).await.unwrap_or(None);
+                                            app.transcript = transcript.clone();
+                                            app.lyrics_scroll = 0;
+                                            app.lyrics_auto_scroll = true;
                                             ai_context = Some(VideoContext::new(video.clone(), transcript));
                                             app.chat_messages.clear();
                                             app.chat_scroll = 0;
@@ -1188,6 +1192,31 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         _ => {}
                     },
 
+                    Panel::Lyrics => {
+                        match (code, modifiers) {
+                            (KeyCode::Esc, _) | (KeyCode::Char('q'), _) => {
+                                app.set_panel(Panel::Search);
+                            }
+                            // Shift+Up: scroll up (manual mode)
+                            (KeyCode::Up, KeyModifiers::SHIFT) => {
+                                app.lyrics_auto_scroll = false;
+                                app.lyrics_scroll = app.lyrics_scroll.saturating_sub(1);
+                            }
+                            // Shift+Down: scroll down (manual mode)
+                            (KeyCode::Down, KeyModifiers::SHIFT) => {
+                                app.lyrics_auto_scroll = false;
+                                app.lyrics_scroll = app.lyrics_scroll.saturating_add(1);
+                            }
+                            // 0: reset to auto-scroll
+                            (KeyCode::Char('0'), _) => {
+                                app.lyrics_auto_scroll = true;
+                                app.lyrics_scroll = 0;
+                            }
+                            _ => {}
+                        }
+                        handled = true;
+                    },
+
                     Panel::Queue => match code {
                         KeyCode::Esc | KeyCode::Char('q') => {
                             app.set_panel(Panel::Search);
@@ -1246,7 +1275,10 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                                 thumbnail: None,
                                                 description: None,
                                             };
-                                            ai_context = Some(VideoContext::new(vi, transcript));
+                                            ai_context = Some(VideoContext::new(vi, transcript.clone()));
+                                            app.transcript = transcript;
+                                            app.lyrics_scroll = 0;
+                                            app.lyrics_auto_scroll = true;
                                             app.chat_messages.clear();
                                             app.chat_scroll = 0;
                                             app.set_status(format!("Playing: {}", entry.title));
@@ -1342,6 +1374,9 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                             app.set_status(format!("Playing: {} — loading transcript…", entry.title));
                                             terminal.draw(|f| ui::draw(f, &app))?;
                                             let transcript = fetch_transcript(&entry.url).await.unwrap_or(None);
+                                            app.transcript = transcript.clone();
+                                            app.lyrics_scroll = 0;
+                                            app.lyrics_auto_scroll = true;
                                             ai_context = Some(VideoContext::new(video, transcript));
                                             app.chat_messages.clear();
                                             app.chat_scroll = 0;
@@ -1449,7 +1484,10 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                                 thumbnail: None,
                                                 description: None,
                                             };
-                                            ai_context = Some(VideoContext::new(vi, transcript));
+                                            ai_context = Some(VideoContext::new(vi, transcript.clone()));
+                                            app.transcript = transcript;
+                                            app.lyrics_scroll = 0;
+                                            app.lyrics_auto_scroll = true;
                                             app.chat_messages.clear();
                                             app.chat_scroll = 0;
                                             app.set_status(format!("Playing: {}", entry.title));

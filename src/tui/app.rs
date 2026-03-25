@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use crate::ai::chat::ChatMessage;
+use crate::ai::transcript::Transcript;
 use crate::library::favorites::FavoriteEntry;
 use crate::player::types::RepeatMode;
 use crate::youtube::VideoInfo;
@@ -9,6 +10,7 @@ use crate::youtube::VideoInfo;
 pub enum Panel {
     Search,
     Results,
+    Lyrics,
     Queue,
     Favorites,
     History,
@@ -75,6 +77,13 @@ pub struct App {
     pub chat_loading: bool,
     // ── Favorites state ──────────────────────────────────────────
     pub fav_items: Vec<FavoriteEntry>,
+    // ── Lyrics state ─────────────────────────────────────────────
+    /// Transcript for the currently playing track
+    pub transcript: Option<Transcript>,
+    /// Scroll offset for lyrics panel (0 = auto-scroll to current segment)
+    pub lyrics_scroll: u16,
+    /// Whether lyrics auto-scrolls to current segment
+    pub lyrics_auto_scroll: bool,
 }
 
 impl App {
@@ -101,6 +110,9 @@ impl App {
             chat_scroll: 0,
             chat_loading: false,
             fav_items: Vec::new(),
+            transcript: None,
+            lyrics_scroll: 0,
+            lyrics_auto_scroll: true,
         }
     }
 

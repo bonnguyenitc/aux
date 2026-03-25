@@ -7,6 +7,7 @@ use crossterm::{
 use std::io::{self, Write};
 use std::time::Duration;
 
+use crate::ai::transcript::Transcript;
 use crate::library::Database;
 use crate::player::{MediaPlayer, MpvPlayer};
 use crate::player::types::RepeatMode;
@@ -25,10 +26,16 @@ pub async fn run_interactive(
     player: &mut MpvPlayer,
     video: &VideoInfo,
     db: &Database,
+    transcript: Option<&Transcript>,
 ) -> Result<InteractiveAction> {
     enable_raw_mode()?;
-    let result = interactive_loop(player, video, db).await;
+    let result = interactive_loop(player, video, db, transcript).await;
     disable_raw_mode()?;
+    // Clear subtitle line if it was printed
+    if transcript.is_some() {
+        print!("\r{:width$}\r", "", width = 80);
+        io::stdout().flush().ok();
+    }
     println!(); // newline after raw mode
     result
 }
@@ -79,6 +86,7 @@ async fn interactive_loop(
     player: &MpvPlayer,
     video: &VideoInfo,
     db: &Database,
+    transcript: Option<&Transcript>,
 ) -> Result<InteractiveAction> {
     // Snapshot fav/queue state once at start (cheap DB reads)
     let is_fav = crate::library::favorites::is_favorite(db, &video.id).unwrap_or(false);
@@ -138,6 +146,30 @@ async fn interactive_loop(
                 queue_icon,
             );
             io::stdout().flush()?;
+        }
+
+        // ── Render subtitle line (below status bar) ──────────────────────
+        if let Some(t) = transcript {
+            // Only show for real subtitles, not description fallback
+            if t.language != "description" {
+                if let Ok(pos) = player.get_position().await {
+                    let pos_ms = pos.as_millis() as u64;
+                    let seg_text = t.segments.iter().find(|s| {
+                        pos_ms >= s.start.as_millis() as u64 && pos_ms < s.end.as_millis() as u64
+                    }).map(|s| s.text.as_str()).unwrap_or("");
+
+                    // Truncate to fit one line (terminal width - padding)
+                    let max_w = crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(80).saturating_sub(8);
+                    let display = if seg_text.len() > max_w {
+                        &seg_text[..max_w]
+                    } else {
+                        seg_text
+                    };
+                    // Print on next line, pad to clear old text, cursor back up
+                    print!("\n\r  📝 {:<width$}\x1b[A\r", display.dimmed(), width = max_w);
+                    io::stdout().flush()?;
+                }
+            }
         }
 
         // ── Poll keyboard events (500ms timeout) ──────────────────────────
