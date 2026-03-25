@@ -1008,7 +1008,7 @@ fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
         help_row("l", "Add selected video to playlist"),
         help_row("S", "Stop playback"),
         help_row("t", "Sleep timer (15m \u{2192} 30m \u{2192} 1h \u{2192} 2h \u{2192} off)"),
-        help_row("e", "Cycle equalizer"),
+        help_row("e", "Cycle equalizer (flat → bass-boost → vocal → treble → loudness)"),
         Line::from(""),
         Line::from(vec![Span::styled(
             "  Lyrics Panel",
@@ -1175,7 +1175,12 @@ fn draw_now_playing_active(frame: &mut Frame, area: Rect, np: &NowPlaying) {
         if np.in_queue { Span::styled(" 📋", Style::default().fg(ACCENT)) } else { Span::raw("") },
     ]);
 
-    // Line 2: channel · volume · speed · repeat · shuffle · sleep
+    // Line 2: channel · volume · speed · eq · repeat · shuffle · sleep
+    let eq_str = if np.eq_preset != "flat" {
+        format!("🎛️{}", np.eq_preset)
+    } else {
+        "🎛️flat".to_string()
+    };
     let line2 = Line::from(vec![
         Span::styled(format!("  {}", channel), Style::default().fg(TEXT_DIM)),
         Span::styled("  ·  ", Style::default().fg(DIM)),
@@ -1184,6 +1189,11 @@ fn draw_now_playing_active(frame: &mut Frame, area: Rect, np: &NowPlaying) {
         Span::styled(
             format!("{}x", np.speed),
             Style::default().fg(if (np.speed - 1.0).abs() > 0.01 { WARN } else { TEXT_DIM }),
+        ),
+        Span::styled("  ·  ", Style::default().fg(DIM)),
+        Span::styled(
+            &eq_str,
+            Style::default().fg(if np.eq_preset != "flat" { ACCENT } else { TEXT_DIM }),
         ),
         Span::styled("  ·  ", Style::default().fg(DIM)),
         Span::styled(format!("{}{}", repeat_label, shuffle_str), Style::default().fg(TEXT_DIM)),
@@ -1279,7 +1289,7 @@ fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
     let line2 = if app.now_playing.is_some() {
         let play_keys: Vec<(&str, &str)> = vec![
             ("Space", "⏯"), ("←→", "seek"), ("+/-", "vol"),
-            ("]/[", "spd"), ("r", "repeat"), ("n", "next"),
+            ("]/[", "spd"), ("e", "eq"), ("r", "repeat"), ("n", "next"),
             ("f", "fav"), ("S", "stop"),
         ];
         let mut spans: Vec<Span> = vec![

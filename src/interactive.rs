@@ -144,14 +144,21 @@ async fn interactive_loop(
                 format!("{}x", speed)
             };
 
+            let eq_icon = crate::player::state::StateFile::read()
+                .ok()
+                .and_then(|s| s.eq_preset)
+                .map(|p| if p != "flat" { format!(" 🎛️{}", p) } else { String::new() })
+                .unwrap_or_default();
+
             print!(
-                "\r  {} {} {} {} · 🔊{}% · {}{}{}{}{}   ",
+                "\r  {} {} {} {} · 🔊{}% · {}{}{}{}{}{}   ",
                 play_icon,
                 bar,
                 format_duration(pos_s).cyan(),
                 format!("/ {}", format_duration(dur_s)).dimmed(),
                 vol,
                 speed_str,
+                eq_icon,
                 repeat_icon,
                 shuffle_icon,
                 fav_icon,

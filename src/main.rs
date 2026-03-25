@@ -1269,6 +1269,7 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 is_fav,
                                 in_queue,
                                 sleep_deadline: None,
+                                eq_preset: "flat".to_string(),
                             });
                             library::history::add_to_history(db, &video, 0).ok();
                             player = Some(p);
@@ -1337,7 +1338,7 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
 
             // Sync speed/repeat/shuffle/sleep from state file
             if let Ok(mut state) = crate::player::state::StateFile::read() {
-                app.update_player_meta(state.speed, state.repeat, state.shuffle, state.sleep_deadline);
+                app.update_player_meta(state.speed, state.repeat, state.shuffle, state.sleep_deadline, state.eq_preset.clone().unwrap_or_else(|| "flat".to_string()));
 
                 // ── Sleep timer enforcement ──────────────────────────────
                 if let Some(deadline) = state.sleep_deadline {

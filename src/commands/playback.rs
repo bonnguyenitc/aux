@@ -24,9 +24,10 @@ pub async fn cmd_now(format: &str) -> Result<()> {
         }
         "oneline" => {
             let s = if info.paused { "⏸" } else { "▶" };
+            let eq = if info.eq_preset != "flat" { format!(" 🎛️{}", info.eq_preset) } else { String::new() };
             println!(
-                "{} {} — {} [{}/{}] {}x 🔊{}%",
-                s, info.video.title, ch, pos, dur, info.speed, info.volume
+                "{} {} — {} [{}/{}] {}x 🔊{}%{}",
+                s, info.video.title, ch, pos, dur, info.speed, info.volume, eq
             );
         }
         _ => {
@@ -42,11 +43,12 @@ pub async fn cmd_now(format: &str) -> Result<()> {
             println!("  🎵 {}", ch);
             println!("  {} {} {} / {}", bar.green(), pos.cyan(), "/".dimmed(), dur.dimmed());
             println!(
-                "  🔊 {}%  ·  {}x  ·  {}  {}\n",
+                "  🔊 {}%  ·  {}x  ·  {}  {}  🎛️{}\n",
                 info.volume,
                 info.speed,
                 info.repeat.label(),
-                if info.shuffle { "🔀" } else { "" }
+                if info.shuffle { "🔀" } else { "" },
+                info.eq_preset,
             );
             if let Some(deadline) = info.sleep_deadline {
                 println!("  😴 Sleep at {}", deadline.format("%H:%M"));

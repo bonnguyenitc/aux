@@ -39,6 +39,7 @@ pub struct NowPlaying {
     /// Whether the current video is in the play queue
     pub in_queue: bool,
     pub sleep_deadline: Option<DateTime<Utc>>,
+    pub eq_preset: String,
 }
 
 /// Application state for the TUI
@@ -305,12 +306,14 @@ impl App {
         repeat: RepeatMode,
         shuffle: bool,
         sleep_deadline: Option<DateTime<Utc>>,
+        eq_preset: String,
     ) {
         if let Some(ref mut np) = self.now_playing {
             np.speed = speed;
             np.repeat = repeat;
             np.shuffle = shuffle;
             np.sleep_deadline = sleep_deadline;
+            np.eq_preset = eq_preset;
         }
     }
 

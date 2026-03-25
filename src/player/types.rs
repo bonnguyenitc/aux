@@ -49,6 +49,7 @@ pub struct NowPlayingInfo {
     pub shuffle: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sleep_deadline: Option<DateTime<Utc>>,
+    pub eq_preset: String,
 }
 
 /// IPC action dispatch type — planned for future daemon event loop.

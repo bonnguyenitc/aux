@@ -55,6 +55,7 @@ impl RemoteSession {
             repeat: self.state.repeat,
             shuffle: self.state.shuffle,
             sleep_deadline: self.state.sleep_deadline,
+            eq_preset: self.state.eq_preset.clone().unwrap_or_else(|| "flat".to_string()),
         })
     }
 
