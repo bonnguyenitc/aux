@@ -26,9 +26,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // Header + tabs
-            Constraint::Min(5),    // Body panel
+            Constraint::Min(4),    // Body panel
             Constraint::Length(4), // Now playing bar
-            Constraint::Length(1), // Keybind bar
+            Constraint::Length(2), // Keybind bar (2 lines: panel + playback)
         ])
         .split(area);
 
@@ -982,12 +982,6 @@ fn draw_now_playing_empty(frame: &mut Frame, area: Rect) {
 // ── Keybind bar ────────────────────────────────────────────────────────────
 
 fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
-    let playing_hint = if app.now_playing.is_some() {
-        "  | Space:pause  ←→:seek  +/-:vol  ]/[:spd  r:repeat  z:shuf  n:next  t:sleep  e:eq  S:stop"
-    } else {
-        ""
-    };
-
     let panel_hint = match app.panel {
         Panel::Search    => " Enter:search  Tab:panels  ?:help  q:quit",
         Panel::Results   => " Enter:play  ↑↓jk:nav  ←→:page  a:queue  f:fav  Tab:panel  Esc:back",
@@ -1000,14 +994,25 @@ fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
         Panel::Help      => " Any key to go back",
     };
 
-    let msg = format!("{}{}", panel_hint, playing_hint);
-
-    let status_msg = app
+    // Line 1: status message (if any) + panel-specific hints
+    let line1_text = app
         .status_message
         .as_deref()
-        .map(|s| format!(" ✦ {}  |{}", s, msg))
-        .unwrap_or_else(|| msg.to_string());
+        .map(|s| format!(" ✦ {}  │ {}", s, panel_hint.trim()))
+        .unwrap_or_else(|| panel_hint.to_string());
 
-    let bar = Paragraph::new(Span::styled(status_msg, Style::default().fg(DIM)));
+    let line1 = Line::from(Span::styled(line1_text, Style::default().fg(DIM)));
+
+    // Line 2: playback controls (only when playing)
+    let line2 = if app.now_playing.is_some() {
+        Line::from(Span::styled(
+            " ♪ Space:⏯  ←→:seek  +/-:vol  ]/[:spd  r:repeat  z:shuf  n:next  t:sleep  e:eq  S:stop",
+            Style::default().fg(DIM),
+        ))
+    } else {
+        Line::from(Span::styled("", Style::default().fg(DIM)))
+    };
+
+    let bar = Paragraph::new(vec![line1, line2]);
     frame.render_widget(bar, area);
 }
