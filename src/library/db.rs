@@ -98,6 +98,13 @@ impl Database {
                 UNIQUE(playlist_id, video_id)
             );
 
+            CREATE TABLE IF NOT EXISTS playback_positions (
+                video_id TEXT PRIMARY KEY,
+                position_secs INTEGER NOT NULL,
+                duration_secs INTEGER,
+                updated_at TEXT DEFAULT (datetime('now','localtime'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_history_played ON history(played_at);
             CREATE INDEX IF NOT EXISTS idx_queue_position ON queue(position);
             CREATE INDEX IF NOT EXISTS idx_search_history_at ON search_history(searched_at);

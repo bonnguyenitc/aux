@@ -95,6 +95,10 @@ pub struct App {
     pub playlist_picker: Option<PlaylistPicker>,
     // ── Help scroll ─────────────────────────────────────────
     pub help_scroll: u16,
+    // ── Saved playback positions (for UX display) ───────────
+    pub saved_positions: std::collections::HashMap<String, u64>,
+    // ── Pending resume seek (deferred until mpv loads stream) ──
+    pub pending_resume_seek: Option<u64>,
 }
 
 /// Popup state: user is choosing which playlist to add a video to
@@ -140,6 +144,8 @@ impl App {
             playlist_name_input: None,
             playlist_picker: None,
             help_scroll: 0,
+            saved_positions: std::collections::HashMap::new(),
+            pending_resume_seek: None,
         }
     }
 

@@ -520,10 +520,15 @@ fn draw_queue(frame: &mut Frame, area: Rect, app: &App) {
             let dur = e.duration_secs
                 .map(|d| format_duration(d as u64))
                 .unwrap_or_else(|| "??:??".to_string());
+            let title_display = if let Some(&pos) = app.saved_positions.get(&e.video_id) {
+                format!("{} ⏸ {}:{:02}", e.title, pos / 60, pos % 60)
+            } else {
+                e.title.clone()
+            };
             Row::new(vec![
                 Cell::from(format!(" {}{}", prefix, i + 1))
                     .style(Style::default().fg(if selected { BRAND } else { DIM }).bg(row_bg)),
-                Cell::from(e.title.as_str()).style(text_style),
+                Cell::from(title_display).style(text_style),
                 Cell::from(dur).style(Style::default().fg(DIM).bg(row_bg)),
             ])
         })
@@ -594,10 +599,15 @@ fn draw_favorites(frame: &mut Frame, area: Rect, app: &App) {
                 .map(|d| format_duration(d as u64))
                 .unwrap_or_else(|| "??:??".to_string());
             let ch = e.channel.as_deref().unwrap_or("Unknown");
+            let title_display = if let Some(&pos) = app.saved_positions.get(&e.video_id) {
+                format!("{} ⏸ {}:{:02}", e.title, pos / 60, pos % 60)
+            } else {
+                e.title.clone()
+            };
             Row::new(vec![
                 Cell::from(format!(" {}❤", prefix))
                     .style(Style::default().fg(if selected { LOVE } else { LOVE }).bg(row_bg)),
-                Cell::from(e.title.as_str()).style(text_style),
+                Cell::from(title_display).style(text_style),
                 Cell::from(ch).style(Style::default().fg(TEXT_DIM).bg(row_bg)),
                 Cell::from(dur).style(Style::default().fg(DIM).bg(row_bg)),
             ])
@@ -666,13 +676,19 @@ fn draw_history(frame: &mut Frame, area: Rect, app: &App) {
             } else {
                 Style::default().fg(TEXT).bg(row_bg)
             };
-            let prefix = if selected { "▸" } else { " " };
+            let prefix = if selected { "\u{25b8}" } else { " " };
             let ch = e.channel.as_deref().unwrap_or("Unknown");
             let when = e.played_at.split('T').next().unwrap_or(&e.played_at);
+            // Show saved position indicator if applicable
+            let title_display = if let Some(&pos) = app.saved_positions.get(&e.video_id) {
+                format!("{} \u{23f8} {}:{:02}", e.title, pos / 60, pos % 60)
+            } else {
+                e.title.clone()
+            };
             Row::new(vec![
                 Cell::from(format!(" {}{}", prefix, i + 1))
                     .style(Style::default().fg(if selected { BRAND } else { DIM }).bg(row_bg)),
-                Cell::from(e.title.as_str()).style(text_style),
+                Cell::from(title_display).style(text_style),
                 Cell::from(ch).style(Style::default().fg(TEXT_DIM).bg(row_bg)),
                 Cell::from(when).style(Style::default().fg(DIM).bg(row_bg)),
             ])
@@ -959,6 +975,7 @@ fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
         help_row("Esc", "Back / close sub-view"),
         help_row("q", "Back / quit"),
         help_row("?", "This help screen"),
+        help_row("", "Videos auto-resume from last position"),
         Line::from(""),
         Line::from(vec![Span::styled(
             "  Playback (any panel while playing)",

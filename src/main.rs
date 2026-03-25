@@ -1188,6 +1188,10 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
     let yt = YtDlp::new();
     let mut player: Option<MpvPlayer> = None;
     let mut ai_context: Option<VideoContext> = None;
+    let mut last_position_save = std::time::Instant::now();
+
+    // Pre-load saved playback positions for UX indicators
+    app.saved_positions = library::playback_position::get_all_positions(db).unwrap_or_default();
 
     loop {
         // Draw
@@ -1204,6 +1208,32 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                 app.now_playing.as_ref().map(|np| np.paused).unwrap_or(false)
             );
             app.update_playback(pos, dur, paused, vol);
+
+            // Deferred resume seek: apply once mpv has loaded (dur > 0)
+            if let Some(seek_pos) = app.pending_resume_seek {
+                if dur > 0 {
+                    p.seek_to(seek_pos as f64).await.ok();
+                    if let Some(ref mut np) = app.now_playing {
+                        np.position_secs = seek_pos;
+                    }
+                    app.set_status(format!("\u{23e9} Resumed from {}:{:02}", seek_pos / 60, seek_pos % 60));
+                    app.pending_resume_seek = None;
+                    // Unpause — we paused at play() time to avoid position-0 audio
+                    p.resume().await.ok();
+                }
+            }
+
+            // Periodic position save (every ~5s)
+            if last_position_save.elapsed().as_secs() >= 5 {
+                if let Some(ref np) = app.now_playing {
+                    library::playback_position::save_position(
+                        db, &np.video.id, pos, dur,
+                    ).ok();
+                }
+                last_position_save = std::time::Instant::now();
+                // Refresh positions cache for list indicators
+                app.saved_positions = library::playback_position::get_all_positions(db).unwrap_or_default();
+            }
 
             // Keep AI context position in sync
             if let Some(ref mut ctx) = ai_context {
@@ -1239,6 +1269,10 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
 
             // RepeatOne is handled by mpv loop-file, skip auto-play
             if is_eof && repeat_mode != crate::player::RepeatMode::One {
+                // Clear saved position for the finished track
+                if let Some(ref np) = app.now_playing {
+                    library::playback_position::clear_position(db, &np.video.id).ok();
+                }
                 // RepeatAll: re-add current track to end of queue before popping next
                 if repeat_mode == crate::player::RepeatMode::All {
                     if let Some(ref np) = app.now_playing {
@@ -1523,6 +1557,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
 
                                             library::history::add_to_history(db, &video, 0).ok();
                                             player = Some(p);
+                                            // Defer resume seek until mpv has loaded the stream
+                                            if let Ok(Some(saved_pos)) = library::playback_position::get_position(db, &video.id) {
+                                                app.pending_resume_seek = Some(saved_pos);
+                                                // Pause immediately to avoid brief playback from position 0
+                                                if let Some(ref pl) = player { pl.pause().await.ok(); }
+                                            }
                                             // Fetch transcript for AI chat context
                                             app.set_status(format!("Playing: {} — loading transcript…", video.title));
                                             terminal.draw(|f| ui::draw(f, &app))?;
@@ -1686,6 +1726,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                                 sleep_deadline: None,
                                             });
                                             player = Some(p);
+                                            // Defer resume seek until mpv has loaded the stream
+                                            if let Ok(Some(saved_pos)) = library::playback_position::get_position(db, &entry.video_id) {
+                                                app.pending_resume_seek = Some(saved_pos);
+                                                // Pause immediately to avoid brief playback from position 0
+                                                if let Some(ref pl) = player { pl.pause().await.ok(); }
+                                            }
                                             // Fetch transcript for AI chat context
                                             app.set_status(format!("Playing: {} — loading transcript…", entry.title));
                                             terminal.draw(|f| ui::draw(f, &app))?;
@@ -1813,6 +1859,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                                 sleep_deadline: None,
                                             });
                                             player = Some(p);
+                                            // Defer resume seek until mpv has loaded the stream
+                                            if let Ok(Some(saved_pos)) = library::playback_position::get_position(db, &video.id) {
+                                                app.pending_resume_seek = Some(saved_pos);
+                                                // Pause immediately to avoid brief playback from position 0
+                                                if let Some(ref pl) = player { pl.pause().await.ok(); }
+                                            }
                                             // Fetch transcript for AI chat context
                                             app.set_status(format!("Playing: {} — loading transcript…", entry.title));
                                             terminal.draw(|f| ui::draw(f, &app))?;
@@ -1931,6 +1983,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                                 sleep_deadline: None,
                                             });
                                             player = Some(p);
+                                            // Defer resume seek until mpv has loaded the stream
+                                            if let Ok(Some(saved_pos)) = library::playback_position::get_position(db, &entry.video_id) {
+                                                app.pending_resume_seek = Some(saved_pos);
+                                                // Pause immediately to avoid brief playback from position 0
+                                                if let Some(ref pl) = player { pl.pause().await.ok(); }
+                                            }
                                             // Fetch transcript for AI chat context
                                             app.set_status(format!("Playing: {} — loading transcript…", entry.title));
                                             terminal.draw(|f| ui::draw(f, &app))?;
@@ -2071,6 +2129,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                                     sleep_deadline: None,
                                                 });
                                                 player = Some(p);
+                                            // Defer resume seek until mpv has loaded the stream
+                                            if let Ok(Some(saved_pos)) = library::playback_position::get_position(db, &video.id) {
+                                                app.pending_resume_seek = Some(saved_pos);
+                                                // Pause immediately to avoid brief playback from position 0
+                                                if let Some(ref pl) = player { pl.pause().await.ok(); }
+                                            }
                                                 let transcript = fetch_transcript(&item.url).await.unwrap_or(None);
                                                 ai_context = Some(VideoContext::new(video, transcript.clone()));
                                                 app.transcript = transcript;
@@ -2154,6 +2218,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                                             sleep_deadline: None,
                                                         });
                                                         player = Some(p);
+                                            // Defer resume seek until mpv has loaded the stream
+                                            if let Ok(Some(saved_pos)) = library::playback_position::get_position(db, &video.id) {
+                                                app.pending_resume_seek = Some(saved_pos);
+                                                // Pause immediately to avoid brief playback from position 0
+                                                if let Some(ref pl) = player { pl.pause().await.ok(); }
+                                            }
                                                         let transcript = fetch_transcript(&entry.url).await.unwrap_or(None);
                                                         ai_context = Some(VideoContext::new(video, transcript.clone()));
                                                         app.transcript = transcript;
@@ -2375,6 +2445,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         }
                         // Next track: n
                         (KeyCode::Char('n'), _) => {
+                            // Save position of current track before skipping
+                            if let Some(ref np) = app.now_playing {
+                                library::playback_position::save_position(
+                                    db, &np.video.id, np.position_secs, np.duration_secs,
+                                ).ok();
+                            }
                             if let Some(ref p) = player {
                                 p.seek_to(999999.0).await.ok();
                                 app.set_status("⏭ Skipped to next");
@@ -2389,6 +2465,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         }
                         // Stop: S (capital)
                         (KeyCode::Char('S'), _) => {
+                            // Save position before stopping
+                            if let Some(ref np) = app.now_playing {
+                                library::playback_position::save_position(
+                                    db, &np.video.id, np.position_secs, np.duration_secs,
+                                ).ok();
+                            }
                             if let Some(mut p) = player.take() {
                                 p.stop().await.ok();
                                 crate::player::state::StateFile::remove().ok();
@@ -2539,6 +2621,13 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
         if app.should_quit {
             break;
         }
+    }
+
+    // Save position before cleanup
+    if let Some(ref np) = app.now_playing {
+        library::playback_position::save_position(
+            db, &np.video.id, np.position_secs, np.duration_secs,
+        ).ok();
     }
 
     // Cleanup
