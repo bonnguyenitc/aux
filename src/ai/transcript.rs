@@ -190,7 +190,7 @@ pub async fn fetch_transcript(video_url: &str) -> Result<Option<Transcript>> {
 
 /// Try to fetch VTT subtitles: manual first, then auto-generated.
 async fn fetch_vtt_transcript(video_url: &str) -> Result<Option<Transcript>> {
-    let temp_dir = std::env::temp_dir().join("duet-subs");
+    let temp_dir = std::env::temp_dir().join("aux-subs");
 
     let output_template = temp_dir.join("sub");
     let output_template_str = output_template.to_str().unwrap_or("sub").to_string();

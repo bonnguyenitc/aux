@@ -32,7 +32,7 @@ impl VideoContext {
     /// Build system prompt with video context
     fn build_system_prompt(&self) -> String {
         let mut prompt = String::from(
-            "You are Duet 🎵, an AI companion watching YouTube with the user. \
+            "You are Aux 🎵, an AI companion watching YouTube with the user. \
              Be conversational, fun, and helpful. Answer in the same language the user uses.\n\n",
         );
 
@@ -100,7 +100,7 @@ pub async fn chat(
     let api_key = resolved.api_key.as_deref().unwrap_or("");
 
     if api_key.is_empty() && resolved.provider != "ollama" {
-        bail!("API key not found. Run: duet config ai --setup");
+        bail!("API key not found. Run: aux config ai --setup");
     }
 
     // Add user message to history

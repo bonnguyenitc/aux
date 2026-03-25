@@ -212,7 +212,7 @@ impl Default for MediaConfig {
 
 impl Config {
     pub fn config_dir() -> Option<PathBuf> {
-        ProjectDirs::from("", "", "duet").map(|d| d.config_dir().to_path_buf())
+        ProjectDirs::from("", "", "aux").map(|d| d.config_dir().to_path_buf())
     }
 
     pub fn config_path() -> Option<PathBuf> {

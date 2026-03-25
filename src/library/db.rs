@@ -4,7 +4,7 @@ use rusqlite::Connection;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-/// Database wrapper for duet's persistent storage
+/// Database wrapper for aux's persistent storage
 pub struct Database {
     conn: Mutex<Connection>,
 }
@@ -31,9 +31,9 @@ impl Database {
     }
 
     fn db_path() -> Result<PathBuf> {
-        let dirs = ProjectDirs::from("", "", "duet")
+        let dirs = ProjectDirs::from("", "", "aux")
             .context("Could not determine data directory")?;
-        Ok(dirs.data_dir().join("duet.db"))
+        Ok(dirs.data_dir().join("aux.db"))
     }
 
     /// Run schema migrations (idempotent).

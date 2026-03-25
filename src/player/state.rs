@@ -5,11 +5,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use super::types::RepeatMode;
-use crate::error::DuetError;
+use crate::error::AuxError;
 use crate::media::MediaInfo;
 
-const STATE_PATH: &str = "/tmp/duet-state.json";
-const PID_PATH: &str = "/tmp/duet.pid";
+const STATE_PATH: &str = "/tmp/aux-state.json";
+const PID_PATH: &str = "/tmp/aux.pid";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateFile {
@@ -70,7 +70,7 @@ impl StateFile {
 
     pub fn read_from(path: &Path) -> Result<Self> {
         let content =
-            std::fs::read_to_string(path).map_err(|_| DuetError::NoActiveSession)?;
+            std::fs::read_to_string(path).map_err(|_| AuxError::NoActiveSession)?;
         serde_json::from_str(&content).context("Corrupt state file")
     }
 
@@ -95,7 +95,7 @@ impl StateFile {
                 // Check if process is alive (signal 0 = test existence)
                 let alive = unsafe { libc::kill(pid as i32, 0) == 0 };
                 if alive {
-                    return Err(DuetError::AlreadyRunning { pid }.into());
+                    return Err(AuxError::AlreadyRunning { pid }.into());
                 }
             }
             // Stale PID file — remove it

@@ -30,7 +30,7 @@ use media::{MediaBackend, YtDlp};
 async fn main() -> Result<()> {
     // Handle Ctrl+C gracefully
     ctrlc::set_handler(move || {
-        let _ = std::fs::remove_file("/tmp/duet-mpv.sock");
+        let _ = std::fs::remove_file("/tmp/aux-mpv.sock");
         crossterm::terminal::disable_raw_mode().ok();
         std::process::exit(0);
     })?;
@@ -90,19 +90,19 @@ async fn main() -> Result<()> {
         }
         Commands::Pause => {
             let remote = crate::player::RemoteSession::connect()
-                .map_err(|_| anyhow::anyhow!("No active duet session. Start one with: duet play <url>"))?;
+                .map_err(|_| anyhow::anyhow!("No active aux session. Start one with: aux play <url>"))?;
             remote.pause().await?;
             println!("  ⏸ Paused");
         }
         Commands::Resume => {
             let remote = crate::player::RemoteSession::connect()
-                .map_err(|_| anyhow::anyhow!("No active duet session. Start one with: duet play <url>"))?;
+                .map_err(|_| anyhow::anyhow!("No active aux session. Start one with: aux play <url>"))?;
             remote.resume().await?;
             println!("  ▶ Resumed");
         }
         Commands::Stop => {
             let remote = crate::player::RemoteSession::connect()
-                .map_err(|_| anyhow::anyhow!("No active duet session. Start one with: duet play <url>"))?;
+                .map_err(|_| anyhow::anyhow!("No active aux session. Start one with: aux play <url>"))?;
             remote.stop().await?;
         }
         Commands::Volume { level } => {
@@ -139,9 +139,9 @@ async fn main() -> Result<()> {
             crate::commands::stats::cmd_stats(&db, &range)?;
         }
         Commands::Logs { lines, follow: _ } => {
-            let log_path = directories::ProjectDirs::from("", "", "duet")
+            let log_path = directories::ProjectDirs::from("", "", "aux")
                 .map(|d| d.data_dir().join("daemon.log"))
-                .unwrap_or_else(|| std::path::PathBuf::from("/tmp/duet-daemon.log"));
+                .unwrap_or_else(|| std::path::PathBuf::from("/tmp/aux-daemon.log"));
             if log_path.exists() {
                 let content = std::fs::read_to_string(&log_path)?;
                 let all_lines: Vec<&str> = content.lines().collect();
@@ -156,13 +156,13 @@ async fn main() -> Result<()> {
         Commands::Chat { message: _, model: _, profile: _ } => {
             println!(
                 "  {}",
-                "Chat requires a video playing. Use: duet search → play → [c] to chat".dimmed()
+                "Chat requires a video playing. Use: aux search → play → [c] to chat".dimmed()
             );
         }
         Commands::Suggest { model: _, profile: _ } => {
             println!(
                 "  {}",
-                "Suggest requires a video playing. Use: duet search → play → [c] to chat"
+                "Suggest requires a video playing. Use: aux search → play → [c] to chat"
                     .dimmed()
             );
         }
@@ -405,7 +405,7 @@ async fn run_chat_mode(context: &mut VideoContext, config: &Config) -> Result<()
     if config.ai.is_none() {
         println!(
             "  {}",
-            "⚠️  AI not configured. Run: duet config ai --setup".yellow()
+            "⚠️  AI not configured. Run: aux config ai --setup".yellow()
         );
         println!();
         return Ok(());
@@ -1022,7 +1022,7 @@ async fn cmd_playlist(db: &Database, action: Option<PlaylistAction>, config: &Co
             let pls = playlist::list_playlists(db)?;
             println!("\n  {} {}\n", "🎶".bold(), "Playlists".bold());
             if pls.is_empty() {
-                println!("  {}", "No playlists yet. Create one: duet playlist create <name>".dimmed());
+                println!("  {}", "No playlists yet. Create one: aux playlist create <name>".dimmed());
                 return Ok(());
             }
             for (i, pl) in pls.iter().enumerate() {
@@ -1135,7 +1135,7 @@ async fn cmd_equalizer(preset: Option<String>) -> Result<()> {
                 let marker = if *name == current { "▶" } else { " " };
                 println!("  {} {}", marker.green(), name.bold());
             }
-            println!("\n  Usage: duet eq <preset>");
+            println!("\n  Usage: aux eq <preset>");
         }
         Some(name) => {
             if eq_preset_filter(&name).is_some() {
@@ -2160,7 +2160,7 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                             }
                                         }
                                     } else {
-                                        app.push_chat_message("assistant", "AI not configured. Run: duet config ai --setup");
+                                        app.push_chat_message("assistant", "AI not configured. Run: aux config ai --setup");
                                     }
                                 } else {
                                     app.push_chat_message("assistant", "Play a track first to chat about it!");
@@ -2415,7 +2415,7 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         }
                         // Chat: c (hint — terminal only)
                         (KeyCode::Char('c'), _) => {
-                            app.set_status("💬 Chat: quit TUI then run: duet chat");
+                            app.set_status("💬 Chat: quit TUI then run: aux chat");
                         }
                         // Equalizer cycle: e
                         (KeyCode::Char('e'), _) => {

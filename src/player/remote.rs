@@ -5,7 +5,7 @@ use super::mpv::MpvPlayer;
 use super::state::StateFile;
 use super::types::{NowPlayingInfo, RepeatMode};
 use super::MediaPlayer;
-use crate::error::DuetError;
+use crate::error::AuxError;
 
 pub struct RemoteSession {
     pub player: MpvPlayer,
@@ -13,10 +13,10 @@ pub struct RemoteSession {
 }
 
 impl RemoteSession {
-    /// Connect to an existing duet session, or return NoActiveSession error.
+    /// Connect to an existing aux session, or return NoActiveSession error.
     pub fn connect() -> Result<Self> {
         if !StateFile::exists() {
-            return Err(DuetError::NoActiveSession.into());
+            return Err(AuxError::NoActiveSession.into());
         }
         let state = StateFile::read()?;
         let player = MpvPlayer::connect_existing()?;

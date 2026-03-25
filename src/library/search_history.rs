@@ -40,7 +40,7 @@ pub fn get_searches(db: &Database, limit: usize) -> Result<Vec<String>> {
 }
 
 /// Clear all saved search history.
-/// Reserved for a future `duet history clear` sub-command.
+/// Reserved for a future `aux history clear` sub-command.
 ///
 /// # Errors
 /// Returns an error if the database operation fails.

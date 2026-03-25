@@ -7,9 +7,9 @@ use tokio::process::{Child, Command};
 use tokio::time::sleep;
 
 use super::MediaPlayer;
-use crate::error::DuetError;
+use crate::error::AuxError;
 
-const SOCKET_PATH: &str = "/tmp/duet-mpv.sock";
+const SOCKET_PATH: &str = "/tmp/aux-mpv.sock";
 
 pub struct MpvPlayer {
     process: Option<Child>,
@@ -30,7 +30,7 @@ impl MpvPlayer {
     pub fn connect_existing() -> Result<Self> {
         let socket_path = PathBuf::from(SOCKET_PATH);
         if !socket_path.exists() {
-            return Err(DuetError::NoActiveSession.into());
+            return Err(AuxError::NoActiveSession.into());
         }
         Ok(Self {
             process: None,
@@ -50,9 +50,9 @@ impl MpvPlayer {
             .arg("--version")
             .output()
             .await
-            .map_err(|_| DuetError::MpvNotFound)?;
+            .map_err(|_| AuxError::MpvNotFound)?;
         if !output.status.success() {
-            return Err(DuetError::MpvNotFound.into());
+            return Err(AuxError::MpvNotFound.into());
         }
         Ok(())
     }

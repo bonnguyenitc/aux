@@ -92,7 +92,7 @@ pub fn show_all(config: &Config) {
     } else {
         println!(
             "  {}",
-            "(not configured — run: duet config ai --setup)".dimmed()
+            "(not configured — run: aux config ai --setup)".dimmed()
         );
     }
     println!();
@@ -105,7 +105,7 @@ pub fn show_ai(config: &Config) {
     } else {
         println!(
             "\n  {}",
-            "AI not configured. Run: duet config ai --setup".yellow()
+            "AI not configured. Run: aux config ai --setup".yellow()
         );
     }
     println!();
@@ -512,7 +512,7 @@ fn default_ai() -> AiConfig {
 pub async fn run_ai_wizard(config: &mut Config) -> Result<()> {
     let theme = ColorfulTheme::default();
 
-    println!("\n  {}\n", "🤖 Duet AI Setup".bold().cyan());
+    println!("\n  {}\n", "🤖 Aux AI Setup".bold().cyan());
 
     // Step 1: Choose provider
     let mut provider_labels: Vec<&str> = PROVIDER_SUGGESTIONS.iter().map(|p| p.label).collect();
@@ -842,7 +842,7 @@ pub async fn run_test(config: &Config, profile: Option<&str>) -> Result<()> {
     let ai = config
         .ai
         .as_ref()
-        .context("AI not configured. Run: duet config ai --setup")?;
+        .context("AI not configured. Run: aux config ai --setup")?;
     let resolved = ai.resolve(profile)?;
 
     println!(

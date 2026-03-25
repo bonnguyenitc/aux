@@ -61,7 +61,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     // Brand
     let brand = Paragraph::new(Line::from(vec![
         Span::styled("  🎵 ", Style::default()),
-        Span::styled("duet", Style::default().fg(BRAND).bold()),
+        Span::styled("aux", Style::default().fg(BRAND).bold()),
         Span::styled(" ", Style::default()),
     ]))
     .block(
@@ -910,7 +910,7 @@ fn draw_chat(frame: &mut Frame, area: Rect, app: &App) {
             lines.push(Line::from(vec![
                 Span::styled(format!("  {} ", icon), Style::default()),
                 Span::styled(
-                    if msg.role == "user" { "You" } else { "Duet" },
+                    if msg.role == "user" { "You" } else { "Aux" },
                     Style::default().fg(color).bold(),
                 ),
             ]));
@@ -1250,9 +1250,9 @@ fn draw_now_playing_empty(frame: &mut Frame, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled("  Use ", Style::default().fg(DIM)),
-            Span::styled("duet search", Style::default().fg(ACCENT)),
+            Span::styled("aux search", Style::default().fg(ACCENT)),
             Span::styled(" or ", Style::default().fg(DIM)),
-            Span::styled("duet play <url>", Style::default().fg(ACCENT)),
+            Span::styled("aux play <url>", Style::default().fg(ACCENT)),
             Span::styled(" to start", Style::default().fg(DIM)),
         ]),
     ])

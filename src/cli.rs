@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "duet",
+    name = "aux",
     about = "🎵 Listen music with AI agent",
     version,
     author
@@ -180,7 +180,7 @@ pub enum Commands {
         preset: Option<String>,
     },
 
-    /// Manage duet configuration
+    /// Manage aux configuration
     #[command(alias = "cfg")]
     Config {
         #[command(subcommand)]

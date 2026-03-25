@@ -4,7 +4,7 @@ use thiserror::Error;
 // All variants are part of the complete error taxonomy; some are only raised by
 // planned daemon/remote features not yet built into this binary.
 #[allow(dead_code)]
-pub enum DuetError {
+pub enum AuxError {
     #[error("yt-dlp not found in PATH. Install it: brew install yt-dlp")]
     YtDlpNotFound,
 
@@ -29,13 +29,13 @@ pub enum DuetError {
     #[error("yt-dlp command failed: {0}")]
     YtDlpError(String),
 
-    #[error("No active duet session. Start one with: duet play <url>")]
+    #[error("No active aux session. Start one with: aux play <url>")]
     NoActiveSession,
 
-    #[error("Another duet instance is already running (PID {pid})")]
+    #[error("Another aux instance is already running (PID {pid})")]
     AlreadyRunning { pid: u32 },
 
-    #[error("mpv process died unexpectedly. Try: duet play <url>")]
+    #[error("mpv process died unexpectedly. Try: aux play <url>")]
     MpvDied,
 
     #[error("Invalid speed: {0}. Must be 0.25-4.0")]

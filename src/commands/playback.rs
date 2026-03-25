@@ -10,7 +10,7 @@ use crate::media::types::format_duration;
 
 pub async fn cmd_now(format: &str) -> Result<()> {
     let remote =
-        RemoteSession::connect().context("No active duet session. Start one with: duet play <url>")?;
+        RemoteSession::connect().context("No active aux session. Start one with: aux play <url>")?;
     let info = remote.now().await?;
 
     let status = if info.paused { "⏸ Paused" } else { "▶ Playing" };

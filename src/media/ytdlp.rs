@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use tokio::process::Command;
 
-use crate::error::DuetError;
+use crate::error::AuxError;
 use super::source::Source;
 use super::types::{StreamUrl, MediaInfo};
 use super::MediaBackend;
@@ -26,10 +26,10 @@ impl YtDlp {
             .arg("--version")
             .output()
             .await
-            .map_err(|_| DuetError::YtDlpNotFound)?;
+            .map_err(|_| AuxError::YtDlpNotFound)?;
 
         if !output.status.success() {
-            return Err(DuetError::YtDlpNotFound.into());
+            return Err(AuxError::YtDlpNotFound.into());
         }
 
         Ok(())
@@ -58,7 +58,7 @@ impl YtDlp {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!(DuetError::YtDlpError(stderr.to_string()));
+            bail!(AuxError::YtDlpError(stderr.to_string()));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -97,7 +97,7 @@ impl MediaBackend for YtDlp {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!(DuetError::YtDlpError(stderr.to_string()));
+            bail!(AuxError::YtDlpError(stderr.to_string()));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -120,7 +120,7 @@ impl MediaBackend for YtDlp {
         }
 
         if results.is_empty() {
-            bail!(DuetError::NoResults {
+            bail!(AuxError::NoResults {
                 query: query.to_string()
             });
         }
@@ -137,7 +137,7 @@ impl MediaBackend for YtDlp {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!(DuetError::YtDlpError(stderr.to_string()));
+            bail!(AuxError::YtDlpError(stderr.to_string()));
         }
 
         let audio_url = String::from_utf8_lossy(&output.stdout)
@@ -145,7 +145,7 @@ impl MediaBackend for YtDlp {
             .to_string();
 
         if audio_url.is_empty() {
-            bail!(DuetError::PlaybackError(
+            bail!(AuxError::PlaybackError(
                 "No audio stream found".to_string()
             ));
         }

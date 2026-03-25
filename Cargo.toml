@@ -1,5 +1,5 @@
 [package]
-name = "duet"
+name = "aux"
 version = "0.1.0"
 edition = "2021"
 description = "Listen music with AI agent — universal audio player powered by yt-dlp"
