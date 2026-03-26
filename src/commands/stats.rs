@@ -29,7 +29,9 @@ pub fn cmd_stats(db: &Database, range: &str) -> Result<()> {
         None => get_all_history(db)?,
     };
 
-    let term_w = crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
+    let term_w = crossterm::terminal::size()
+        .map(|(w, _)| w as usize)
+        .unwrap_or(80);
     let divider = "─".repeat(term_w.min(60));
 
     println!("\n  {} Listening Stats ({})", "📊".bold(), range.cyan());
@@ -57,8 +59,14 @@ pub fn cmd_stats(db: &Database, range: &str) -> Result<()> {
     top_channels.sort_by(|a, b| b.1.cmp(&a.1));
 
     println!("  🎵 {} tracks played", format!("{}", total_tracks).bold());
-    println!("  ⏱  {} total listening time", format_duration_long(total_listened).green());
-    println!("  📺 {} unique channels", format!("{}", unique_channels.len()).bold());
+    println!(
+        "  ⏱  {} total listening time",
+        format_duration_long(total_listened).green()
+    );
+    println!(
+        "  📺 {} unique channels",
+        format!("{}", unique_channels.len()).bold()
+    );
     println!("  {}", divider.dimmed());
 
     if !top_channels.is_empty() {

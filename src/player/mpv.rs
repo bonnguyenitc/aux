@@ -93,11 +93,8 @@ impl MpvPlayer {
             };
 
             // Write with timeout
-            let write_result = tokio::time::timeout(
-                Duration::from_secs(2),
-                stream.write_all(&cmd),
-            )
-            .await;
+            let write_result =
+                tokio::time::timeout(Duration::from_secs(2), stream.write_all(&cmd)).await;
 
             match write_result {
                 Ok(Ok(())) => {}
@@ -114,11 +111,8 @@ impl MpvPlayer {
             // Read response with timeout
             let mut reader = BufReader::new(stream);
             let mut response = String::new();
-            let read_result = tokio::time::timeout(
-                Duration::from_secs(2),
-                reader.read_line(&mut response),
-            )
-            .await;
+            let read_result =
+                tokio::time::timeout(Duration::from_secs(2), reader.read_line(&mut response)).await;
 
             match read_result {
                 Ok(Ok(_)) => return Ok(response),
@@ -207,7 +201,6 @@ impl MediaPlayer for MpvPlayer {
         Ok(())
     }
 
-
     async fn stop(&mut self) -> Result<()> {
         if let Some(mut child) = self.process.take() {
             child.kill().await.ok();
@@ -292,14 +285,16 @@ impl MpvPlayer {
     /// Set mpv loop-file property: true = "inf" (loop forever), false = "no"
     pub async fn set_loop_file(&self, enabled: bool) -> Result<()> {
         let val = if enabled { "inf" } else { "no" };
-        self.set_property("loop-file", &serde_json::json!(val)).await
+        self.set_property("loop-file", &serde_json::json!(val))
+            .await
     }
 
     /// Set audio filter chain (equalizer). Empty string to clear.
     pub async fn set_audio_filter(&self, filter: &str) -> Result<()> {
         if filter.is_empty() {
             // Remove all audio filters, keep only loudnorm
-            self.set_property("af", &serde_json::json!("loudnorm")).await
+            self.set_property("af", &serde_json::json!("loudnorm"))
+                .await
         } else {
             // Set loudnorm + the equalizer filter
             let combined = format!("loudnorm,{}", filter);

@@ -9,9 +9,9 @@ use std::time::Duration;
 
 use crate::ai::transcript::Transcript;
 use crate::library::Database;
-use crate::player::{MediaPlayer, MpvPlayer};
-use crate::player::types::RepeatMode;
 use crate::media::types::{format_duration, MediaInfo};
+use crate::player::types::RepeatMode;
+use crate::player::{MediaPlayer, MpvPlayer};
 use crate::util::next_speed_preset;
 
 /// Actions that require leaving the interactive loop (need the player stopped or suspended)
@@ -135,8 +135,8 @@ async fn interactive_loop(
                 RepeatMode::All => " 🔁",
             };
             let shuffle_icon = if state.shuffle { " 🔀" } else { "" };
-            let fav_icon    = if state.is_fav  { " ❤️" } else { "" };
-            let queue_icon  = if state.in_queue { " 📋" } else { "" };
+            let fav_icon = if state.is_fav { " ❤️" } else { "" };
+            let queue_icon = if state.in_queue { " 📋" } else { "" };
 
             let speed_str = if (speed - 1.0_f64).abs() > 0.01 {
                 format!("{}", format!("{}x", speed).yellow())
@@ -147,7 +147,13 @@ async fn interactive_loop(
             let eq_icon = crate::player::state::StateFile::read()
                 .ok()
                 .and_then(|s| s.eq_preset)
-                .map(|p| if p != "flat" { format!(" 🎛️{}", p) } else { String::new() })
+                .map(|p| {
+                    if p != "flat" {
+                        format!(" 🎛️{}", p)
+                    } else {
+                        String::new()
+                    }
+                })
                 .unwrap_or_default();
 
             print!(
@@ -173,19 +179,32 @@ async fn interactive_loop(
             if t.language != "description" {
                 if let Ok(pos) = player.get_position().await {
                     let pos_ms = pos.as_millis() as u64;
-                    let seg_text = t.segments.iter().find(|s| {
-                        pos_ms >= s.start.as_millis() as u64 && pos_ms < s.end.as_millis() as u64
-                    }).map(|s| s.text.as_str()).unwrap_or("");
+                    let seg_text = t
+                        .segments
+                        .iter()
+                        .find(|s| {
+                            pos_ms >= s.start.as_millis() as u64
+                                && pos_ms < s.end.as_millis() as u64
+                        })
+                        .map(|s| s.text.as_str())
+                        .unwrap_or("");
 
                     // Truncate to fit one line (terminal width - padding)
-                    let max_w = crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(80).saturating_sub(8);
+                    let max_w = crossterm::terminal::size()
+                        .map(|(w, _)| w as usize)
+                        .unwrap_or(80)
+                        .saturating_sub(8);
                     let display = if seg_text.len() > max_w {
                         &seg_text[..max_w]
                     } else {
                         seg_text
                     };
                     // Print on next line, pad to clear old text, cursor back up
-                    print!("\n\r  📝 {:<width$}\x1b[A\r", display.dimmed(), width = max_w);
+                    print!(
+                        "\n\r  📝 {:<width$}\x1b[A\r",
+                        display.dimmed(),
+                        width = max_w
+                    );
                     io::stdout().flush()?;
                 }
             }
@@ -348,8 +367,7 @@ async fn interactive_loop(
                             match crate::library::queue::add_to_queue(db, video) {
                                 Ok(_) => {
                                     state.in_queue = true;
-                                    let len =
-                                        crate::library::queue::queue_length(db).unwrap_or(0);
+                                    let len = crate::library::queue::queue_length(db).unwrap_or(0);
                                     state.flash(format!("📋 added to queue (#{})", len));
                                 }
                                 Err(e) => state.flash(format!("❌ queue error: {}", e)),
@@ -362,20 +380,22 @@ async fn interactive_loop(
                         use chrono::Utc;
                         if let Ok(mut sf) = crate::player::state::StateFile::read() {
                             let now = Utc::now();
-                            let remaining_mins = sf.sleep_deadline
+                            let remaining_mins = sf
+                                .sleep_deadline
                                 .map(|d| (d - now).num_minutes().max(0))
                                 .unwrap_or(0);
-                            let (next_mins, label) = if remaining_mins == 0 || sf.sleep_deadline.is_none() {
-                                (15, "15min")
-                            } else if remaining_mins <= 15 {
-                                (30, "30min")
-                            } else if remaining_mins <= 30 {
-                                (60, "1h")
-                            } else if remaining_mins <= 60 {
-                                (120, "2h")
-                            } else {
-                                (0, "off")
-                            };
+                            let (next_mins, label) =
+                                if remaining_mins == 0 || sf.sleep_deadline.is_none() {
+                                    (15, "15min")
+                                } else if remaining_mins <= 15 {
+                                    (30, "30min")
+                                } else if remaining_mins <= 30 {
+                                    (60, "1h")
+                                } else if remaining_mins <= 60 {
+                                    (120, "2h")
+                                } else {
+                                    (0, "off")
+                                };
 
                             if next_mins == 0 {
                                 sf.sleep_deadline = None;
@@ -385,7 +405,11 @@ async fn interactive_loop(
                                 let deadline = now + chrono::Duration::minutes(next_mins);
                                 sf.sleep_deadline = Some(deadline);
                                 sf.write().ok();
-                                state.flash(format!("😴 Sleep in {} ({})", label, deadline.format("%H:%M")));
+                                state.flash(format!(
+                                    "😴 Sleep in {} ({})",
+                                    label,
+                                    deadline.format("%H:%M")
+                                ));
                             }
                         }
                     }

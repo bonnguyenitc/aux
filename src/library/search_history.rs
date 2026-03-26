@@ -1,5 +1,5 @@
-use anyhow::Result;
 use super::db::Database;
+use anyhow::Result;
 
 /// Persist a search query to history.
 /// Deduplicates: if the same query already exists it is moved to the top (most recent).
@@ -13,14 +13,8 @@ pub fn add_search(db: &Database, query: &str) -> Result<()> {
     let conn = db.connection();
     // Delete any existing entry for the same query, then insert fresh at the top.
     // We track recency via `searched_at` — ordering by DESC gives most-recent first.
-    conn.execute(
-        "DELETE FROM search_history WHERE query = ?1",
-        [query],
-    )?;
-    conn.execute(
-        "INSERT INTO search_history (query) VALUES (?1)",
-        [query],
-    )?;
+    conn.execute("DELETE FROM search_history WHERE query = ?1", [query])?;
+    conn.execute("INSERT INTO search_history (query) VALUES (?1)", [query])?;
     Ok(())
 }
 
@@ -30,9 +24,8 @@ pub fn add_search(db: &Database, query: &str) -> Result<()> {
 /// Returns an error if the database operation fails.
 pub fn get_searches(db: &Database, limit: usize) -> Result<Vec<String>> {
     let conn = db.connection();
-    let mut stmt = conn.prepare(
-        "SELECT query FROM search_history ORDER BY searched_at DESC LIMIT ?1",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT query FROM search_history ORDER BY searched_at DESC LIMIT ?1")?;
     let queries = stmt
         .query_map([limit as i64], |row| row.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;

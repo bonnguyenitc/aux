@@ -1,6 +1,6 @@
+use super::source::Source;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use super::source::Source;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MediaInfo {
@@ -43,7 +43,14 @@ impl fmt::Display for MediaInfo {
             .map(|d| format_duration(d as u64))
             .unwrap_or_else(|| "LIVE".to_string());
 
-        write!(f, "{} {} — {} [{}]", self.source.icon(), self.title, channel, duration)
+        write!(
+            f,
+            "{} {} — {} [{}]",
+            self.source.icon(),
+            self.title,
+            channel,
+            duration
+        )
     }
 }
 

@@ -38,11 +38,7 @@ impl RemoteSession {
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
         let volume = self.player.get_volume().await.unwrap_or(80);
-        let speed = self
-            .player
-            .get_speed()
-            .await
-            .unwrap_or(self.state.speed);
+        let speed = self.player.get_speed().await.unwrap_or(self.state.speed);
         let paused = self.player.get_paused().await.unwrap_or(false);
 
         Ok(NowPlayingInfo {
@@ -55,7 +51,11 @@ impl RemoteSession {
             repeat: self.state.repeat,
             shuffle: self.state.shuffle,
             sleep_deadline: self.state.sleep_deadline,
-            eq_preset: self.state.eq_preset.clone().unwrap_or_else(|| "flat".to_string()),
+            eq_preset: self
+                .state
+                .eq_preset
+                .clone()
+                .unwrap_or_else(|| "flat".to_string()),
         })
     }
 

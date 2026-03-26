@@ -1,30 +1,41 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
 
+use crate::media::types::format_duration;
 use crate::player::remote::RemoteSession;
 use crate::player::state::StateFile;
 use crate::player::types::RepeatMode;
 use crate::player::MediaPlayer;
 use crate::util::{next_speed_preset, parse_duration_str, parse_timestamp};
-use crate::media::types::format_duration;
 
 pub async fn cmd_now(format: &str) -> Result<()> {
-    let remote =
-        RemoteSession::connect().context("No active aux session. Start one with: aux play <url>")?;
+    let remote = RemoteSession::connect()
+        .context("No active aux session. Start one with: aux play <url>")?;
     let info = remote.now().await?;
 
-    let status = if info.paused { "⏸ Paused" } else { "▶ Playing" };
+    let status = if info.paused {
+        "⏸ Paused"
+    } else {
+        "▶ Playing"
+    };
     let pos = format_duration(info.position_secs as u64);
     let dur = format_duration(info.duration_secs as u64);
     let ch = info.video.channel.as_deref().unwrap_or("Unknown");
 
     match format {
         "json" => {
-            println!("{}", serde_json::to_string_pretty(&info).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&info).unwrap_or_default()
+            );
         }
         "oneline" => {
             let s = if info.paused { "⏸" } else { "▶" };
-            let eq = if info.eq_preset != "flat" { format!(" 🎛️{}", info.eq_preset) } else { String::new() };
+            let eq = if info.eq_preset != "flat" {
+                format!(" 🎛️{}", info.eq_preset)
+            } else {
+                String::new()
+            };
             println!(
                 "{} {} — {} [{}/{}] {}x 🔊{}%{}",
                 s, info.video.title, ch, pos, dur, info.speed, info.volume, eq
@@ -33,7 +44,9 @@ pub async fn cmd_now(format: &str) -> Result<()> {
         _ => {
             let progress = if info.duration_secs > 0.0 {
                 (info.position_secs as f64 / info.duration_secs as f64).min(1.0)
-            } else { 0.0 };
+            } else {
+                0.0
+            };
             let bar_w: usize = 30;
             let filled = (progress * bar_w as f64) as usize;
             let remaining = bar_w.saturating_sub(filled + 1);
@@ -41,7 +54,13 @@ pub async fn cmd_now(format: &str) -> Result<()> {
 
             println!("\n  {} {}", status.bold(), info.video.title.bold());
             println!("  🎵 {}", ch);
-            println!("  {} {} {} / {}", bar.green(), pos.cyan(), "/".dimmed(), dur.dimmed());
+            println!(
+                "  {} {} {} / {}",
+                bar.green(),
+                pos.cyan(),
+                "/".dimmed(),
+                dur.dimmed()
+            );
             println!(
                 "  🔊 {}%  ·  {}x  ·  {}  {}  🎛️{}\n",
                 info.volume,
@@ -130,10 +149,7 @@ pub async fn cmd_repeat(mode: Option<RepeatMode>) -> Result<()> {
 pub async fn cmd_shuffle() -> Result<()> {
     let remote = RemoteSession::connect()?;
     let enabled = remote.toggle_shuffle().await?;
-    println!(
-        "  🔀 Shuffle: {}",
-        if enabled { "on" } else { "off" }
-    );
+    println!("  🔀 Shuffle: {}", if enabled { "on" } else { "off" });
     Ok(())
 }
 
@@ -178,4 +194,3 @@ pub async fn cmd_prev() -> Result<()> {
     println!("  ⏮ Restarted / previous track");
     Ok(())
 }
-

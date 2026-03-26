@@ -1,6 +1,6 @@
-use anyhow::Result;
-use crate::media::MediaInfo;
 use super::db::Database;
+use crate::media::MediaInfo;
+use anyhow::Result;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // Fields populated from DB; not all are displayed in current UI
@@ -26,10 +26,7 @@ pub struct PlaylistItem {
 /// Create a new playlist. Returns the playlist id.
 pub fn create_playlist(db: &Database, name: &str) -> Result<i64> {
     let conn = db.connection();
-    conn.execute(
-        "INSERT INTO playlists (name) VALUES (?1)",
-        [name],
-    )?;
+    conn.execute("INSERT INTO playlists (name) VALUES (?1)", [name])?;
     Ok(conn.last_insert_rowid())
 }
 
@@ -38,7 +35,9 @@ pub fn delete_playlist(db: &Database, name: &str) -> Result<bool> {
     let conn = db.connection();
     // Get playlist id first
     let pid: Option<i64> = conn
-        .query_row("SELECT id FROM playlists WHERE name = ?1", [name], |r| r.get(0))
+        .query_row("SELECT id FROM playlists WHERE name = ?1", [name], |r| {
+            r.get(0)
+        })
         .ok();
     if let Some(pid) = pid {
         conn.execute("DELETE FROM playlist_items WHERE playlist_id = ?1", [pid])?;
@@ -123,7 +122,11 @@ pub fn add_to_playlist(db: &Database, playlist_name: &str, video: &MediaInfo) ->
 pub fn remove_from_playlist(db: &Database, playlist_name: &str, video_id: &str) -> Result<bool> {
     let conn = db.connection();
     let pid: Option<i64> = conn
-        .query_row("SELECT id FROM playlists WHERE name = ?1", [playlist_name], |r| r.get(0))
+        .query_row(
+            "SELECT id FROM playlists WHERE name = ?1",
+            [playlist_name],
+            |r| r.get(0),
+        )
         .ok();
     if let Some(pid) = pid {
         let count = conn.execute(

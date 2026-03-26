@@ -135,10 +135,7 @@ fn show_ai_detail(ai: &AiConfig) {
             let model = profile.model.as_deref().unwrap_or(&ai.model);
             let key_status = format_key_status(
                 profile.api_key.as_deref(),
-                profile
-                    .api_key_env
-                    .as_deref()
-                    .or(ai.api_key_env.as_deref()),
+                profile.api_key_env.as_deref().or(ai.api_key_env.as_deref()),
             );
             println!(
                 "    {:<12}{} / {:<28}{}",
@@ -186,8 +183,14 @@ pub fn show_path() {
 
 pub fn show_player(config: &Config) {
     println!("\n  {}", "🎵 Player Config".bold().cyan());
-    println!("  volume          = {}", config.player.default_volume.to_string().yellow());
-    println!("  search_results  = {}", config.player.search_results.to_string().yellow());
+    println!(
+        "  volume          = {}",
+        config.player.default_volume.to_string().yellow()
+    );
+    println!(
+        "  search_results  = {}",
+        config.player.search_results.to_string().yellow()
+    );
     println!("  backend         = {}", config.player.backend.yellow());
     println!();
 }
@@ -234,9 +237,15 @@ pub fn player_set(
 
 pub fn show_media(config: &Config) {
     println!("\n  {}", "🎵 Media Config".bold().cyan());
-    println!("  prefer_format   = {}", config.media.prefer_format.yellow());
+    println!(
+        "  prefer_format   = {}",
+        config.media.prefer_format.yellow()
+    );
     println!("  backend         = {}", config.media.backend.yellow());
-    println!("  default_source  = {}", config.media.default_source.yellow());
+    println!(
+        "  default_source  = {}",
+        config.media.default_source.yellow()
+    );
     println!();
 }
 
@@ -308,7 +317,9 @@ pub fn ai_set(
     }
 
     if changed.is_empty() {
-        bail!("No flags provided. Use --provider, --model, --api-key, --api-key-env, or --base-url");
+        bail!(
+            "No flags provided. Use --provider, --model, --api-key, --api-key-env, or --base-url"
+        );
     }
 
     config.save()?;
@@ -382,10 +393,7 @@ pub fn list_profiles(config: &Config) {
                 let model = profile.model.as_deref().unwrap_or(&ai.model);
                 let key_status = format_key_status(
                     profile.api_key.as_deref(),
-                    profile
-                        .api_key_env
-                        .as_deref()
-                        .or(ai.api_key_env.as_deref()),
+                    profile.api_key_env.as_deref().or(ai.api_key_env.as_deref()),
                 );
                 println!(
                     "    {:<12}{} / {:<28}{}",
@@ -449,12 +457,7 @@ pub fn set_key(config: &mut Config, key: &str, value: &str) -> Result<()> {
         ),
     }
     config.save()?;
-    println!(
-        "  {} {} = {}",
-        "✅ Set".green(),
-        key.cyan(),
-        value.yellow()
-    );
+    println!("  {} {} = {}", "✅ Set".green(), key.cyan(), value.yellow());
     Ok(())
 }
 
@@ -610,11 +613,7 @@ pub async fn run_ai_wizard(config: &mut Config) -> Result<()> {
             .ai
             .as_ref()
             .and_then(|a| a.api_key.clone())
-            .or_else(|| {
-                std::env::var(&default_env)
-                    .ok()
-                    .filter(|v| !v.is_empty())
-            });
+            .or_else(|| std::env::var(&default_env).ok().filter(|v| !v.is_empty()));
 
         let hint = if existing_key.is_some() {
             " (press Enter to keep current key)"

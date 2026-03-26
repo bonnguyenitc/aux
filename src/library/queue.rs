@@ -1,6 +1,6 @@
-use anyhow::Result;
-use crate::media::MediaInfo;
 use super::db::Database;
+use crate::media::MediaInfo;
+use anyhow::Result;
 
 /// Add a video to the end of the queue.
 /// Returns `Ok(true)` if added, `Ok(false)` if already in queue (duplicate skipped).
@@ -59,7 +59,9 @@ pub fn get_queue(db: &Database) -> Result<Vec<QueueEntry>> {
                 url: row.get(4)?,
                 duration_secs: row.get(5)?,
                 position: row.get(6)?,
-                source: row.get::<_, String>(7).unwrap_or_else(|_| "youtube".to_string()),
+                source: row
+                    .get::<_, String>(7)
+                    .unwrap_or_else(|_| "youtube".to_string()),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -85,7 +87,9 @@ pub fn pop_next(db: &Database) -> Result<Option<QueueEntry>> {
                     url: row.get(4)?,
                     duration_secs: row.get(5)?,
                     position: row.get(6)?,
-                    source: row.get::<_, String>(7).unwrap_or_else(|_| "youtube".to_string()),
+                    source: row
+                        .get::<_, String>(7)
+                        .unwrap_or_else(|_| "youtube".to_string()),
                 })
             },
         )
@@ -197,7 +201,10 @@ mod tests {
         add_to_queue(&db, &video).expect("first add");
         add_to_queue(&db, &video).expect("second add");
         let len = queue_length(&db).expect("length");
-        assert_eq!(len, 1, "queue should have exactly 1 item after duplicate add");
+        assert_eq!(
+            len, 1,
+            "queue should have exactly 1 item after duplicate add"
+        );
     }
 
     #[test]

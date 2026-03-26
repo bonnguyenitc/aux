@@ -1,15 +1,15 @@
 mod ai;
-mod commands;
 mod cli;
+mod commands;
 mod config;
 mod config_cmd;
 mod error;
 mod interactive;
 mod library;
+mod media;
 mod player;
 mod tui;
 mod util;
-mod media;
 
 use anyhow::Result;
 use clap::Parser;
@@ -19,12 +19,15 @@ use std::io::{self, Write};
 use std::time::Instant;
 
 use ai::{ai_chat, fetch_transcript, VideoContext};
-use cli::{Cli, Commands, AiAction, ConfigAction, FavAction, PlayerAction, PlaylistAction, QueueAction, MediaAction};
+use cli::{
+    AiAction, Cli, Commands, ConfigAction, FavAction, MediaAction, PlayerAction, PlaylistAction,
+    QueueAction,
+};
 use config::Config;
 use interactive::{run_interactive, InteractiveAction};
 use library::Database;
-use player::{MediaPlayer, MpvPlayer};
 use media::{MediaBackend, YtDlp};
+use player::{MediaPlayer, MpvPlayer};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -54,10 +57,19 @@ async fn main() -> Result<()> {
     };
 
     match command {
-        Commands::Search { query, limit, source } => {
+        Commands::Search {
+            query,
+            limit,
+            source,
+        } => {
             cmd_search(&query.join(" "), limit, &source, &config, &db).await?;
         }
-        Commands::Play { url, daemon, speed, repeat } => {
+        Commands::Play {
+            url,
+            daemon,
+            speed,
+            repeat,
+        } => {
             cmd_play(&url, &config, &db).await?;
             // Apply initial speed/repeat to state file after player starts
             if speed.is_some() || repeat.is_some() {
@@ -89,20 +101,23 @@ async fn main() -> Result<()> {
             crate::commands::playback::cmd_now(fmt).await?;
         }
         Commands::Pause => {
-            let remote = crate::player::RemoteSession::connect()
-                .map_err(|_| anyhow::anyhow!("No active aux session. Start one with: aux play <url>"))?;
+            let remote = crate::player::RemoteSession::connect().map_err(|_| {
+                anyhow::anyhow!("No active aux session. Start one with: aux play <url>")
+            })?;
             remote.pause().await?;
             println!("  ⏸ Paused");
         }
         Commands::Resume => {
-            let remote = crate::player::RemoteSession::connect()
-                .map_err(|_| anyhow::anyhow!("No active aux session. Start one with: aux play <url>"))?;
+            let remote = crate::player::RemoteSession::connect().map_err(|_| {
+                anyhow::anyhow!("No active aux session. Start one with: aux play <url>")
+            })?;
             remote.resume().await?;
             println!("  ▶ Resumed");
         }
         Commands::Stop => {
-            let remote = crate::player::RemoteSession::connect()
-                .map_err(|_| anyhow::anyhow!("No active aux session. Start one with: aux play <url>"))?;
+            let remote = crate::player::RemoteSession::connect().map_err(|_| {
+                anyhow::anyhow!("No active aux session. Start one with: aux play <url>")
+            })?;
             remote.stop().await?;
         }
         Commands::Volume { level } => {
@@ -153,17 +168,23 @@ async fn main() -> Result<()> {
                 println!("  No daemon log found at {}", log_path.display());
             }
         }
-        Commands::Chat { message: _, model: _, profile: _ } => {
+        Commands::Chat {
+            message: _,
+            model: _,
+            profile: _,
+        } => {
             println!(
                 "  {}",
                 "Chat requires a video playing. Use: aux search → play → [c] to chat".dimmed()
             );
         }
-        Commands::Suggest { model: _, profile: _ } => {
+        Commands::Suggest {
+            model: _,
+            profile: _,
+        } => {
             println!(
                 "  {}",
-                "Suggest requires a video playing. Use: aux search → play → [c] to chat"
-                    .dimmed()
+                "Suggest requires a video playing. Use: aux search → play → [c] to chat".dimmed()
             );
         }
         Commands::History { limit, today } => {
@@ -190,8 +211,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-
-
 /// Returns Some(new_query) if user wants to search again, None if user quit
 async fn play_video(
     video: &media::MediaInfo,
@@ -201,11 +220,7 @@ async fn play_video(
     let yt = YtDlp::new();
     let started_at = Instant::now();
 
-    println!(
-        "  {} {}",
-        "▶ Playing:".green().bold(),
-        video.title.bold()
-    );
+    println!("  {} {}", "▶ Playing:".green().bold(), video.title.bold());
     println!(
         "  {} {}",
         "🎵 Channel:".dimmed(),
@@ -253,7 +268,14 @@ async fn play_video(
     // Enter interactive mode
     let mut current_video = video.clone();
     let result = loop {
-        match run_interactive(&mut player, &current_video, db, ai_context.transcript.as_ref()).await? {
+        match run_interactive(
+            &mut player,
+            &current_video,
+            db,
+            ai_context.transcript.as_ref(),
+        )
+        .await?
+        {
             InteractiveAction::Quit => {
                 player.stop().await?;
                 println!("\n  {} 👋", "Stopped.".dimmed());
@@ -299,7 +321,8 @@ async fn play_video(
                 }
                 // Pick next: shuffle → random, else sequential
                 let shuffle_on = crate::player::state::StateFile::read()
-                    .map(|s| s.shuffle).unwrap_or(false);
+                    .map(|s| s.shuffle)
+                    .unwrap_or(false);
                 let next_entry = if shuffle_on {
                     let q = queue::get_queue(db).unwrap_or_default();
                     if q.is_empty() {
@@ -331,10 +354,14 @@ async fn play_video(
                                 duration: entry.duration_secs.map(|d| d as f64),
                                 view_count: None,
                                 thumbnail: None,
-                                description: None, source: crate::media::Source::default(), extractor_key: None,
+                                description: None,
+                                source: crate::media::Source::default(),
+                                extractor_key: None,
                             };
-                            let transcript = crate::ai::transcript::fetch_transcript(&current_video.url)
-                                .await.unwrap_or(None);
+                            let transcript =
+                                crate::ai::transcript::fetch_transcript(&current_video.url)
+                                    .await
+                                    .unwrap_or(None);
                             ai_context = VideoContext::new(current_video.clone(), transcript);
                             library::history::add_to_history(db, &current_video, 0).ok();
                             print_player_ui_inline(&entry.title, entry.channel.as_deref());
@@ -365,11 +392,21 @@ async fn play_video(
 /// Called at initial playback start and again after returning from chat mode.
 fn print_player_ui(video: &media::MediaInfo) {
     use colored::Colorize;
-    let term_w = crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
+    let term_w = crossterm::terminal::size()
+        .map(|(w, _)| w as usize)
+        .unwrap_or(80);
     let divider = "─".repeat(term_w.min(80));
     println!();
-    println!("  {} {}", "▶ Now playing:".green().bold(), video.title.bold());
-    println!("  {} {}", "🎵".dimmed(), video.channel.as_deref().unwrap_or("Unknown").dimmed());
+    println!(
+        "  {} {}",
+        "▶ Now playing:".green().bold(),
+        video.title.bold()
+    );
+    println!(
+        "  {} {}",
+        "🎵".dimmed(),
+        video.channel.as_deref().unwrap_or("Unknown").dimmed()
+    );
     println!("  {}", divider.dimmed());
     println!(
         "  {} pause  {} seek  {} vol  {} speed  {} repeat  {} shuf  {} eq  {} fav  {} queue  {} sleep  {} search  {} chat  {} quit",
@@ -412,13 +449,12 @@ async fn run_chat_mode(context: &mut VideoContext, config: &Config) -> Result<()
     }
 
     // Resolve AI config (default profile, no overrides)
-    let resolved = config
-        .ai
-        .as_ref()
-        .unwrap()
-        .resolve(None)?;
+    let resolved = config.ai.as_ref().unwrap().resolve(None)?;
 
-    println!("  {} Esc to exit chat  /quit or /q to quit\n", "💡".dimmed());
+    println!(
+        "  {} Esc to exit chat  /quit or /q to quit\n",
+        "💡".dimmed()
+    );
 
     loop {
         // Read one line from the user with ESC support via crossterm raw mode.
@@ -426,7 +462,7 @@ async fn run_chat_mode(context: &mut VideoContext, config: &Config) -> Result<()
         let input = read_chat_input()?;
 
         let input = match input {
-            None => break,                    // ESC → quit chat
+            None => break, // ESC → quit chat
             Some(s) => s,
         };
         let input = input.trim().to_string();
@@ -454,7 +490,11 @@ async fn run_chat_mode(context: &mut VideoContext, config: &Config) -> Result<()
             }
             Err(e) => {
                 spinner.finish_and_clear();
-                println!("  {} {}\n", "🤖:".bold().cyan(), format!("Error: {}", e).red());
+                println!(
+                    "  {} {}\n",
+                    "🤖:".bold().cyan(),
+                    format!("Error: {}", e).red()
+                );
             }
         }
     }
@@ -522,8 +562,13 @@ fn read_chat_input() -> anyhow::Result<Option<String>> {
     Ok(result)
 }
 
-
-async fn cmd_search(query: &str, limit: usize, source_str: &str, config: &Config, db: &Database) -> Result<()> {
+async fn cmd_search(
+    query: &str,
+    limit: usize,
+    source_str: &str,
+    config: &Config,
+    db: &Database,
+) -> Result<()> {
     use colored::Colorize;
     use std::collections::HashSet;
 
@@ -539,7 +584,13 @@ async fn cmd_search(query: &str, limit: usize, source_str: &str, config: &Config
     };
 
     loop {
-        println!("\n  {} {} {}{}", "🔍 Searching:".green().bold(), format!("[{}]", source.display_name()).dimmed(), current_query.bold(), "\n");
+        println!(
+            "\n  {} {} {}{}",
+            "🔍 Searching:".green().bold(),
+            format!("[{}]", source.display_name()).dimmed(),
+            current_query.bold(),
+            "\n"
+        );
 
         let yt = YtDlp::new();
         // Fetch a larger batch for local pagination (up to 5 pages)
@@ -579,9 +630,20 @@ async fn cmd_search(query: &str, limit: usize, source_str: &str, config: &Config
                         .map(|d| media::types::format_duration(d as u64))
                         .unwrap_or_else(|| "LIVE".to_string());
                     let channel = v.channel.as_deref().unwrap_or("Unknown");
-                    let fav   = if fav_ids.contains(&v.id)   { "❤️ " } else { "" };
-                    let queue = if queue_ids.contains(&v.id)  { "📋" } else { "" };
-                    format!("{}. {}{}{} · {} · {}", global_idx, fav, queue, v.title, channel, duration)
+                    let fav = if fav_ids.contains(&v.id) {
+                        "❤️ "
+                    } else {
+                        ""
+                    };
+                    let queue = if queue_ids.contains(&v.id) {
+                        "📋"
+                    } else {
+                        ""
+                    };
+                    format!(
+                        "{}. {}{}{} · {} · {}",
+                        global_idx, fav, queue, v.title, channel, duration
+                    )
                 })
                 .collect();
 
@@ -645,7 +707,10 @@ async fn cmd_play(url: &str, config: &Config, db: &Database) -> Result<()> {
     } else {
         // Keyword query — use search
         let results = yt.search(url, 1, &media::Source::YouTube).await?;
-        results.into_iter().next().ok_or_else(|| anyhow::anyhow!("No results for: {}", url))?
+        results
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("No results for: {}", url))?
     };
 
     play_video(&video, config, db).await?;
@@ -677,12 +742,10 @@ fn select_video(items: &[String], query: &str, page: &PageInfo) -> Result<Select
         cursor::{Hide, MoveTo, Show},
         event::{self, Event, KeyCode, KeyModifiers},
         execute, queue,
-        style::{
-            Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor,
-        },
+        style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor},
         terminal::{
-            disable_raw_mode, enable_raw_mode, size, Clear, ClearType,
-            EnterAlternateScreen, LeaveAlternateScreen,
+            disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen,
+            LeaveAlternateScreen,
         },
     };
 
@@ -749,10 +812,7 @@ fn select_video(items: &[String], query: &str, page: &PageInfo) -> Result<Select
                     SetAttribute(Attribute::Reset),
                 )?;
             } else {
-                queue!(
-                    io::stdout(),
-                    Print(format!("    {}\r\n", display)),
-                )?;
+                queue!(io::stdout(), Print(format!("    {}\r\n", display)),)?;
             }
         }
 
@@ -779,11 +839,7 @@ fn select_video(items: &[String], query: &str, page: &PageInfo) -> Result<Select
             SetForegroundColor(Color::DarkGrey),
             Print(format!("\r\n  {}\r\n", divider)),
             ResetColor,
-            Print(format!(
-                "  {}{}\r\n",
-                nav_parts.join("   "),
-                counter,
-            )),
+            Print(format!("  {}{}\r\n", nav_parts.join("   "), counter,)),
         )?;
 
         io::stdout().flush()?;
@@ -822,7 +878,9 @@ fn select_video(items: &[String], query: &str, page: &PageInfo) -> Result<Select
 // ─── History ─────────────────────────────────────────────────
 
 fn cmd_history(db: &Database, limit: usize, today: bool) -> Result<()> {
-    let term_w = crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
+    let term_w = crossterm::terminal::size()
+        .map(|(w, _)| w as usize)
+        .unwrap_or(80);
     let divider = "─".repeat(term_w.min(70));
     let entries = if today {
         println!("\n  {} {}", "📅".bold(), "Today's Listening History".bold());
@@ -834,7 +892,11 @@ fn cmd_history(db: &Database, limit: usize, today: bool) -> Result<()> {
     println!("  {}", divider.dimmed());
 
     if entries.is_empty() {
-        println!("  {} {}", "🎵".dimmed(), "No history yet. Play some music!".dimmed());
+        println!(
+            "  {} {}",
+            "🎵".dimmed(),
+            "No history yet. Play some music!".dimmed()
+        );
         println!();
         return Ok(());
     }
@@ -846,7 +908,11 @@ fn cmd_history(db: &Database, limit: usize, today: bool) -> Result<()> {
             .map(|d| media::types::format_duration(d as u64))
             .unwrap_or_else(|| "?".to_string());
         let listened = media::types::format_duration(entry.listened_secs as u64);
-        let when = entry.played_at.split('T').next().unwrap_or(&entry.played_at);
+        let when = entry
+            .played_at
+            .split('T')
+            .next()
+            .unwrap_or(&entry.played_at);
 
         println!(
             "  {} {}  ·  {}  ·  {} {}  ·  {}",
@@ -863,7 +929,13 @@ fn cmd_history(db: &Database, limit: usize, today: bool) -> Result<()> {
         "  {} {} tracks  ·  {} total listened",
         "∑".dimmed(),
         entries.len(),
-        media::types::format_duration(entries.iter().map(|e| e.listened_secs.max(0) as u64).sum::<u64>()).green(),
+        media::types::format_duration(
+            entries
+                .iter()
+                .map(|e| e.listened_secs.max(0) as u64)
+                .sum::<u64>()
+        )
+        .green(),
     );
     println!();
     Ok(())
@@ -956,7 +1028,9 @@ async fn cmd_queue(db: &Database, action: Option<QueueAction>, config: &Config) 
                 return Ok(());
             }
 
-            let term_w = crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
+            let term_w = crossterm::terminal::size()
+                .map(|(w, _)| w as usize)
+                .unwrap_or(80);
             let divider = "─".repeat(term_w.min(70));
 
             for (i, entry) in entries.iter().enumerate() {
@@ -990,9 +1064,18 @@ async fn cmd_queue(db: &Database, action: Option<QueueAction>, config: &Config) 
             if let Some(video) = results.first() {
                 if library::queue::add_to_queue(db, video)? {
                     let len = library::queue::queue_length(db)?;
-                    println!("  {} {} added to queue (#{})", "📋", video.title.bold(), len);
+                    println!(
+                        "  {} {} added to queue (#{})",
+                        "📋",
+                        video.title.bold(),
+                        len
+                    );
                 } else {
-                    println!("  {} {} is already in queue — skipped", "⚠️", video.title.dimmed());
+                    println!(
+                        "  {} {} is already in queue — skipped",
+                        "⚠️",
+                        video.title.dimmed()
+                    );
                 }
             }
         }
@@ -1014,7 +1097,11 @@ async fn cmd_queue(db: &Database, action: Option<QueueAction>, config: &Config) 
 }
 // ─── Playlists ────────────────────────────────────────────────
 
-async fn cmd_playlist(db: &Database, action: Option<PlaylistAction>, config: &Config) -> Result<()> {
+async fn cmd_playlist(
+    db: &Database,
+    action: Option<PlaylistAction>,
+    config: &Config,
+) -> Result<()> {
     use crate::library::playlist;
 
     match action {
@@ -1022,7 +1109,10 @@ async fn cmd_playlist(db: &Database, action: Option<PlaylistAction>, config: &Co
             let pls = playlist::list_playlists(db)?;
             println!("\n  {} {}\n", "🎶".bold(), "Playlists".bold());
             if pls.is_empty() {
-                println!("  {}", "No playlists yet. Create one: aux playlist create <name>".dimmed());
+                println!(
+                    "  {}",
+                    "No playlists yet. Create one: aux playlist create <name>".dimmed()
+                );
                 return Ok(());
             }
             for (i, pl) in pls.iter().enumerate() {
@@ -1035,12 +1125,10 @@ async fn cmd_playlist(db: &Database, action: Option<PlaylistAction>, config: &Co
             }
             println!();
         }
-        Some(PlaylistAction::Create { name }) => {
-            match playlist::create_playlist(db, &name) {
-                Ok(_) => println!("  {} Created playlist: {}", "🎶", name.bold()),
-                Err(_) => println!("  {} Playlist '{}' already exists", "⚠️", name),
-            }
-        }
+        Some(PlaylistAction::Create { name }) => match playlist::create_playlist(db, &name) {
+            Ok(_) => println!("  {} Created playlist: {}", "🎶", name.bold()),
+            Err(_) => println!("  {} Playlist '{}' already exists", "⚠️", name),
+        },
         Some(PlaylistAction::Delete { name }) => {
             if playlist::delete_playlist(db, &name)? {
                 println!("  {} Deleted playlist: {}", "🗑️", name);
@@ -1048,24 +1136,27 @@ async fn cmd_playlist(db: &Database, action: Option<PlaylistAction>, config: &Co
                 println!("  {} Playlist '{}' not found", "⚠️", name);
             }
         }
-        Some(PlaylistAction::Show { name }) => {
-            match playlist::get_playlist_items(db, &name) {
-                Ok(items) => {
-                    println!("\n  {} {} ({} tracks)\n", "🎶".bold(), name.bold(), items.len());
-                    for (i, item) in items.iter().enumerate() {
-                        let ch = item.channel.as_deref().unwrap_or("Unknown");
-                        println!(
-                            "  {} {} — {}",
-                            format!("{}.", i + 1).dimmed(),
-                            item.title.bold(),
-                            ch.dimmed(),
-                        );
-                    }
-                    println!();
+        Some(PlaylistAction::Show { name }) => match playlist::get_playlist_items(db, &name) {
+            Ok(items) => {
+                println!(
+                    "\n  {} {} ({} tracks)\n",
+                    "🎶".bold(),
+                    name.bold(),
+                    items.len()
+                );
+                for (i, item) in items.iter().enumerate() {
+                    let ch = item.channel.as_deref().unwrap_or("Unknown");
+                    println!(
+                        "  {} {} — {}",
+                        format!("{}.", i + 1).dimmed(),
+                        item.title.bold(),
+                        ch.dimmed(),
+                    );
                 }
-                Err(_) => println!("  {} Playlist '{}' not found", "⚠️", name),
+                println!();
             }
-        }
+            Err(_) => println!("  {} Playlist '{}' not found", "⚠️", name),
+        },
         Some(PlaylistAction::Add { name, url }) => {
             let yt = YtDlp::new();
             let results = yt.search(&url, 1, &media::Source::YouTube).await?;
@@ -1089,7 +1180,12 @@ async fn cmd_playlist(db: &Database, action: Option<PlaylistAction>, config: &Co
             library::queue::clear_queue(db)?;
             match playlist::load_playlist_to_queue(db, &name) {
                 Ok(count) if count > 0 => {
-                    println!("  {} Loaded {} tracks from '{}' into queue", "🎶", count, name.bold());
+                    println!(
+                        "  {} Loaded {} tracks from '{}' into queue",
+                        "🎶",
+                        count,
+                        name.bold()
+                    );
                     // Play first item
                     if let Some(entry) = library::queue::pop_next(db)? {
                         println!("  {} Playing: {}", "▶".green(), entry.title.bold());
@@ -1156,7 +1252,12 @@ async fn cmd_equalizer(preset: Option<String>) -> Result<()> {
                 }
                 println!("  {} EQ set to: {}", "🎛️", name.bold());
             } else {
-                println!("  {} Unknown preset: '{}'. Available: {:?}", "❌", name, eq_preset_names());
+                println!(
+                    "  {} Unknown preset: '{}'. Available: {:?}",
+                    "❌",
+                    name,
+                    eq_preset_names()
+                );
             }
         }
     }
@@ -1193,14 +1294,21 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
     let mut player: Option<MpvPlayer> = None;
     let mut ai_context: Option<VideoContext> = None;
     let mut last_position_save = std::time::Instant::now();
+    let mut last_mpv_poll = std::time::Instant::now();
+    let mut last_state_read = std::time::Instant::now();
 
     // Pre-load saved playback positions for UX indicators
     app.saved_positions = library::playback_position::get_all_positions(db).unwrap_or_default();
 
     // Background task handles for non-blocking I/O
-    let mut pending_transcript: Option<tokio::task::JoinHandle<Option<crate::ai::transcript::Transcript>>> = None;
+    let mut pending_transcript: Option<
+        tokio::task::JoinHandle<Option<crate::ai::transcript::Transcript>>,
+    > = None;
     let mut pending_transcript_video: Option<crate::media::MediaInfo> = None;
-    let mut pending_search: Option<(tokio::task::JoinHandle<anyhow::Result<Vec<crate::media::MediaInfo>>>, String)> = None;
+    let mut pending_search: Option<(
+        tokio::task::JoinHandle<anyhow::Result<Vec<crate::media::MediaInfo>>>,
+        String,
+    )> = None;
     let mut pending_stream: Option<(
         tokio::task::JoinHandle<anyhow::Result<crate::media::types::StreamUrl>>,
         crate::media::MediaInfo,
@@ -1238,11 +1346,16 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                 match handle.await {
                     Ok(Ok(results)) => {
                         library::search_history::add_search(db, &query).ok();
-                        app.search_history = library::search_history::get_searches(db, 100).unwrap_or_default();
+                        app.search_history =
+                            library::search_history::get_searches(db, 100).unwrap_or_default();
                         let total = results.len();
                         app.set_search_results(results);
                         app.set_panel(Panel::Results);
-                        app.set_status(format!("Found {} results (page 1/{})", total, app.search_total_pages()));
+                        app.set_status(format!(
+                            "Found {} results (page 1/{})",
+                            total,
+                            app.search_total_pages()
+                        ));
                     }
                     Ok(Err(e)) => app.set_status(format!("Search failed: {}", e)),
                     Err(e) => app.set_status(format!("Search failed: {}", e)),
@@ -1256,7 +1369,9 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                 let (handle, video, is_fav, in_queue) = pending_stream.take().unwrap();
                 match handle.await {
                     Ok(Ok(stream)) => {
-                        if let Some(mut old) = player.take() { old.stop().await.ok(); }
+                        if let Some(mut old) = player.take() {
+                            old.stop().await.ok();
+                        }
                         let mut p = MpvPlayer::new();
                         if p.play(&stream.audio_url, &video.title).await.is_ok() {
                             let state = crate::player::state::StateFile::new(video.clone(), false);
@@ -1278,14 +1393,20 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                             library::history::add_to_history(db, &video, 0).ok();
                             player = Some(p);
                             // Defer resume seek
-                            if let Ok(Some(saved_pos)) = library::playback_position::get_position(db, &video.id) {
+                            if let Ok(Some(saved_pos)) =
+                                library::playback_position::get_position(db, &video.id)
+                            {
                                 app.pending_resume_seek = Some(saved_pos);
-                                if let Some(ref pl) = player { pl.pause().await.ok(); }
+                                if let Some(ref pl) = player {
+                                    pl.pause().await.ok();
+                                }
                             }
                             // Spawn transcript fetch in background
                             let url_owned = video.url.clone();
                             pending_transcript = Some(tokio::spawn(async move {
-                                crate::ai::transcript::fetch_transcript(&url_owned).await.unwrap_or(None)
+                                crate::ai::transcript::fetch_transcript(&url_owned)
+                                    .await
+                                    .unwrap_or(None)
                             }));
                             pending_transcript_video = Some(video.clone());
                             app.set_status(format!("Playing: {}", video.title));
@@ -1299,150 +1420,209 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
             }
         }
 
-        // Update playback info from mpv
+        // Update playback info from mpv (throttled to ~500ms to avoid IPC overload)
         if let Some(ref p) = player {
-            let pos = p.get_position().await.map(|d| d.as_secs()).unwrap_or(0);
-            let dur = p.get_duration().await.map(|d| d.as_secs()).unwrap_or(0);
-            let vol = p.get_volume().await.unwrap_or(80);
-            let paused = p.get_paused().await.unwrap_or(
-                app.now_playing.as_ref().map(|np| np.paused).unwrap_or(false)
-            );
-            app.update_playback(pos, dur, paused, vol);
-
-            // Deferred resume seek: apply once mpv has loaded (dur > 0)
-            if let Some(seek_pos) = app.pending_resume_seek {
-                if dur > 0 {
-                    p.seek_to(seek_pos as f64).await.ok();
-                    if let Some(ref mut np) = app.now_playing {
-                        np.position_secs = seek_pos;
-                    }
-                    app.set_status(format!("\u{23e9} Resumed from {}:{:02}", seek_pos / 60, seek_pos % 60));
-                    app.pending_resume_seek = None;
-                    // Unpause — we paused at play() time to avoid position-0 audio
-                    p.resume().await.ok();
-                }
-            }
-
-            // Periodic position save (every ~5s)
-            if last_position_save.elapsed().as_secs() >= 5 {
-                if let Some(ref np) = app.now_playing {
-                    library::playback_position::save_position(
-                        db, &np.video.id, pos, dur,
-                    ).ok();
-                }
-                last_position_save = std::time::Instant::now();
-                // Refresh positions cache for list indicators
-                app.saved_positions = library::playback_position::get_all_positions(db).unwrap_or_default();
-            }
-
-            // Keep AI context position in sync
-            if let Some(ref mut ctx) = ai_context {
-                ctx.current_position = Duration::from_secs(pos);
-            }
-
-            // Sync speed/repeat/shuffle/sleep from state file
-            if let Ok(mut state) = crate::player::state::StateFile::read() {
-                app.update_player_meta(state.speed, state.repeat, state.shuffle, state.sleep_deadline, state.eq_preset.clone().unwrap_or_else(|| "flat".to_string()));
-
-                // ── Sleep timer enforcement ──────────────────────────────
-                if let Some(deadline) = state.sleep_deadline {
-                    if chrono::Utc::now() >= deadline {
-                        // Time's up — stop playback
-                        if let Some(ref mut pl) = player {
-                            pl.stop().await.ok();
-                        }
-                        player = None;
-                        app.now_playing = None;
-                        state.sleep_deadline = None;
-                        state.write().ok();
-                        app.set_status("😴 Sleep timer — playback stopped. Goodnight! 🌙");
-                        continue;
-                    }
-                }
-            }
-
-            // ── Auto-play: detect track end → play next from queue ───────
-            let is_eof = p.is_finished().await.unwrap_or(false);
-            let repeat_mode = app.now_playing.as_ref()
-                .map(|np| np.repeat)
-                .unwrap_or(crate::player::RepeatMode::Off);
-
-            // RepeatOne is handled by mpv loop-file, skip auto-play
-            if is_eof && repeat_mode != crate::player::RepeatMode::One {
-                // Clear saved position for the finished track
-                if let Some(ref np) = app.now_playing {
-                    library::playback_position::clear_position(db, &np.video.id).ok();
-                }
-                // RepeatAll: re-add current track to end of queue before popping next
-                if repeat_mode == crate::player::RepeatMode::All {
-                    if let Some(ref np) = app.now_playing {
-                        library::queue::add_to_queue(db, &np.video).ok();
-                    }
-                }
-
-                // Shuffle: pick random from queue
-                let next_entry = if app.now_playing.as_ref().map(|np| np.shuffle).unwrap_or(false) {
-                    let q = library::queue::get_queue(db).unwrap_or_default();
-                    if q.is_empty() {
-                        None
-                    } else {
-                        use std::collections::hash_map::DefaultHasher;
-                        use std::hash::{Hash, Hasher};
-                        let mut hasher = DefaultHasher::new();
-                        std::time::SystemTime::now().hash(&mut hasher);
-                        let idx = (hasher.finish() as usize) % q.len();
-                        let entry = q[idx].clone();
-                        library::queue::remove_from_queue(db, entry.id).ok();
-                        Some(entry)
-                    }
+            if last_mpv_poll.elapsed().as_millis() >= 500 {
+                last_mpv_poll = std::time::Instant::now();
+                let is_paused = app
+                    .now_playing
+                    .as_ref()
+                    .map(|np| np.paused)
+                    .unwrap_or(false);
+                // When paused, skip position/duration queries — they don't change
+                let (pos, dur) = if is_paused {
+                    let np = app.now_playing.as_ref();
+                    (
+                        np.map(|n| n.position_secs).unwrap_or(0),
+                        np.map(|n| n.duration_secs).unwrap_or(0),
+                    )
                 } else {
-                    library::queue::pop_next(db).unwrap_or(None)
+                    let p_val = p.get_position().await.map(|d| d.as_secs()).unwrap_or(0);
+                    let d_val = p.get_duration().await.map(|d| d.as_secs()).unwrap_or(0);
+                    (p_val, d_val)
                 };
+                let vol = p.get_volume().await.unwrap_or(80);
+                let paused = p.get_paused().await.unwrap_or(is_paused);
+                app.update_playback(pos, dur, paused, vol);
 
-                if let Some(entry) = next_entry {
-                    app.set_status(format!("⏭ Next: {}...", entry.title));
-                    let is_fav = library::favorites::is_favorite(db, &entry.video_id).unwrap_or(false);
-                    let in_queue = library::queue::is_in_queue(db, &entry.video_id).unwrap_or(false);
-                    let video = crate::media::MediaInfo {
-                        id: entry.video_id.clone(), title: entry.title.clone(),
-                        channel: entry.channel.clone(), url: entry.url.clone(),
-                        duration: entry.duration_secs.map(|d| d as f64),
-                        view_count: None, thumbnail: None, description: None, source: crate::media::Source::default(), extractor_key: None,
-                    };
-                    let url = entry.url.clone();
-                    pending_stream = Some((
-                        tokio::spawn(async move {
-                            let yt = YtDlp::new();
-                            use crate::media::MediaBackend;
-                            yt.get_stream_url(&url).await
-                        }),
-                        video,
-                        is_fav,
-                        in_queue,
-                    ));
-                } else if repeat_mode != crate::player::RepeatMode::All {
-                    // Queue empty, not repeat-all → stop
-                    app.set_status("⏹ Queue finished");
+                // Deferred resume seek: apply once mpv has loaded (dur > 0)
+                if let Some(seek_pos) = app.pending_resume_seek {
+                    if dur > 0 {
+                        p.seek_to(seek_pos as f64).await.ok();
+                        if let Some(ref mut np) = app.now_playing {
+                            np.position_secs = seek_pos;
+                        }
+                        app.set_status(format!(
+                            "\u{23e9} Resumed from {}:{:02}",
+                            seek_pos / 60,
+                            seek_pos % 60
+                        ));
+                        app.pending_resume_seek = None;
+                        // Unpause — we paused at play() time to avoid position-0 audio
+                        p.resume().await.ok();
+                    }
                 }
-            }
+
+                // Periodic position save (every ~5s)
+                if last_position_save.elapsed().as_secs() >= 5 {
+                    if let Some(ref np) = app.now_playing {
+                        library::playback_position::save_position(db, &np.video.id, pos, dur).ok();
+                    }
+                    last_position_save = std::time::Instant::now();
+                    // Refresh positions cache for list indicators
+                    app.saved_positions =
+                        library::playback_position::get_all_positions(db).unwrap_or_default();
+                }
+
+                // Keep AI context position in sync
+                if let Some(ref mut ctx) = ai_context {
+                    ctx.current_position = Duration::from_secs(pos);
+                }
+
+                // Sync speed/repeat/shuffle/sleep from state file (throttled to ~2s)
+                // Note: sleep timer may overshoot by up to ~2s — acceptable for UX
+                if last_state_read.elapsed().as_secs() >= 2 {
+                    last_state_read = std::time::Instant::now();
+                    if let Ok(mut state) = crate::player::state::StateFile::read() {
+                        app.update_player_meta(
+                            state.speed,
+                            state.repeat,
+                            state.shuffle,
+                            state.sleep_deadline,
+                            state
+                                .eq_preset
+                                .clone()
+                                .unwrap_or_else(|| "flat".to_string()),
+                        );
+
+                        // ── Sleep timer enforcement ──────────────────────────────
+                        if let Some(deadline) = state.sleep_deadline {
+                            if chrono::Utc::now() >= deadline {
+                                // Time's up — stop playback
+                                if let Some(ref mut pl) = player {
+                                    pl.stop().await.ok();
+                                }
+                                player = None;
+                                app.now_playing = None;
+                                state.sleep_deadline = None;
+                                state.write().ok();
+                                app.set_status("😴 Sleep timer — playback stopped. Goodnight! 🌙");
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                // ── Auto-play: detect track end → play next from queue ───────
+                // Skip is_finished() when paused — track can't end while paused
+                let is_paused_now = app
+                    .now_playing
+                    .as_ref()
+                    .map(|np| np.paused)
+                    .unwrap_or(false);
+                let is_eof = if is_paused_now {
+                    false
+                } else {
+                    p.is_finished().await.unwrap_or(false)
+                };
+                let repeat_mode = app
+                    .now_playing
+                    .as_ref()
+                    .map(|np| np.repeat)
+                    .unwrap_or(crate::player::RepeatMode::Off);
+
+                // RepeatOne is handled by mpv loop-file, skip auto-play
+                if is_eof && repeat_mode != crate::player::RepeatMode::One {
+                    // Clear saved position for the finished track
+                    if let Some(ref np) = app.now_playing {
+                        library::playback_position::clear_position(db, &np.video.id).ok();
+                    }
+                    // RepeatAll: re-add current track to end of queue before popping next
+                    if repeat_mode == crate::player::RepeatMode::All {
+                        if let Some(ref np) = app.now_playing {
+                            library::queue::add_to_queue(db, &np.video).ok();
+                        }
+                    }
+
+                    // Shuffle: pick random from queue
+                    let next_entry = if app
+                        .now_playing
+                        .as_ref()
+                        .map(|np| np.shuffle)
+                        .unwrap_or(false)
+                    {
+                        let q = library::queue::get_queue(db).unwrap_or_default();
+                        if q.is_empty() {
+                            None
+                        } else {
+                            use std::collections::hash_map::DefaultHasher;
+                            use std::hash::{Hash, Hasher};
+                            let mut hasher = DefaultHasher::new();
+                            std::time::SystemTime::now().hash(&mut hasher);
+                            let idx = (hasher.finish() as usize) % q.len();
+                            let entry = q[idx].clone();
+                            library::queue::remove_from_queue(db, entry.id).ok();
+                            Some(entry)
+                        }
+                    } else {
+                        library::queue::pop_next(db).unwrap_or(None)
+                    };
+
+                    if let Some(entry) = next_entry {
+                        app.set_status(format!("⏭ Next: {}...", entry.title));
+                        let is_fav =
+                            library::favorites::is_favorite(db, &entry.video_id).unwrap_or(false);
+                        let in_queue =
+                            library::queue::is_in_queue(db, &entry.video_id).unwrap_or(false);
+                        let video = crate::media::MediaInfo {
+                            id: entry.video_id.clone(),
+                            title: entry.title.clone(),
+                            channel: entry.channel.clone(),
+                            url: entry.url.clone(),
+                            duration: entry.duration_secs.map(|d| d as f64),
+                            view_count: None,
+                            thumbnail: None,
+                            description: None,
+                            source: crate::media::Source::default(),
+                            extractor_key: None,
+                        };
+                        let url = entry.url.clone();
+                        pending_stream = Some((
+                            tokio::spawn(async move {
+                                let yt = YtDlp::new();
+                                use crate::media::MediaBackend;
+                                yt.get_stream_url(&url).await
+                            }),
+                            video,
+                            is_fav,
+                            in_queue,
+                        ));
+                    } else if repeat_mode != crate::player::RepeatMode::All {
+                        // Queue empty, not repeat-all → stop
+                        app.set_status("⏹ Queue finished");
+                    }
+                }
+            } // end throttle check
         }
 
         // Handle events
         if event::poll(Duration::from_millis(250))? {
-            if let Event::Key(KeyEvent { code, modifiers, .. }) = event::read()? {
-
+            if let Event::Key(KeyEvent {
+                code, modifiers, ..
+            }) = event::read()?
+            {
                 // Universal: Tab switches panels
                 if code == KeyCode::Tab {
                     let next = match app.panel {
-                        Panel::Search     => Panel::Results,
-                        Panel::Results    => Panel::Lyrics,
-                        Panel::Lyrics     => Panel::Queue,
-                        Panel::Queue      => Panel::Favorites,
-                        Panel::Favorites  => Panel::History,
-                        Panel::History    => Panel::Playlists,
-                        Panel::Playlists  => Panel::Chat,
-                        Panel::Chat       => Panel::Help,
-                        Panel::Help       => Panel::Search,
+                        Panel::Search => Panel::Results,
+                        Panel::Results => Panel::Lyrics,
+                        Panel::Lyrics => Panel::Queue,
+                        Panel::Queue => Panel::Favorites,
+                        Panel::Favorites => Panel::History,
+                        Panel::History => Panel::Playlists,
+                        Panel::Playlists => Panel::Chat,
+                        Panel::Chat => Panel::Help,
+                        Panel::Help => Panel::Search,
                     };
                     // Preload data for panels that need it
                     match next {
@@ -1450,13 +1630,16 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                             app.queue_items = library::queue::get_queue(db).unwrap_or_default();
                         }
                         Panel::Favorites => {
-                            app.fav_items = library::favorites::get_favorites(db).unwrap_or_default();
+                            app.fav_items =
+                                library::favorites::get_favorites(db).unwrap_or_default();
                         }
                         Panel::History => {
-                            app.history_items = library::history::get_history(db, 50).unwrap_or_default();
+                            app.history_items =
+                                library::history::get_history(db, 50).unwrap_or_default();
                         }
                         Panel::Playlists => {
-                            app.playlist_list = library::playlist::list_playlists(db).unwrap_or_default();
+                            app.playlist_list =
+                                library::playlist::list_playlists(db).unwrap_or_default();
                             app.playlist_items_view = None;
                         }
                         _ => {}
@@ -1474,8 +1657,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                             app.close_playlist_picker();
                             app.set_status("Cancelled");
                         }
-                        KeyCode::Up => { app.picker_prev(); }
-                        KeyCode::Down => { app.picker_next(); }
+                        KeyCode::Up => {
+                            app.picker_prev();
+                        }
+                        KeyCode::Down => {
+                            app.picker_next();
+                        }
                         KeyCode::Enter => {
                             // Clone needed data out of the picker before mutating
                             let (video, playlist_name) = {
@@ -1509,173 +1696,193 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                 match app.panel {
                     Panel::Search => {
                         // Ctrl+S: cycle search source before other key handling
-                        if code == KeyCode::Char('s') && modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+                        if code == KeyCode::Char('s')
+                            && modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+                        {
                             app.cycle_search_source();
                             continue;
                         }
                         match code {
-                        KeyCode::Esc => {
-                            app.should_quit = true;
-                        }
-                        KeyCode::Char('q') => {
-                            app.should_quit = true;
-                        }
-                        KeyCode::Char('?') => {
-                            app.set_panel(Panel::Help);
-                        }
-                        // ── History navigation ──────────────────────────────
-                        KeyCode::Up => {
-                            app.search_history_up();
-                            handled = true; // don't let global volume handle ↑
-                        }
-                        KeyCode::Down => {
-                            app.search_history_down();
-                            handled = true;
-                        }
-                        // ── Execute search ──────────────────────────────────
-                        KeyCode::Enter => {
-                            if !app.search_input.is_empty() {
-                                let query = app.search_input.clone();
-                                app.cancel_search_history_nav();
-                                app.set_status("🔍 Searching...");
-
-                                // Spawn search in background to keep TUI responsive
-                                let fetch_count = app.search_page_size * 5;
-                                let q = query.clone();
-                                let source = app.search_source.clone();
-                                pending_search = Some((
-                                    tokio::spawn(async move {
-                                        let yt = YtDlp::new();
-                                        use crate::media::MediaBackend;
-                                        yt.search(&q, fetch_count, &source).await
-                                    }),
-                                    query,
-                                ));
+                            KeyCode::Esc => {
+                                app.should_quit = true;
                             }
-                        }
-                        KeyCode::Backspace => {
-                            app.cancel_search_history_nav();
-                            app.search_input.pop();
-                        }
-                        KeyCode::Char(c) => {
-                            app.cancel_search_history_nav();
-                            app.search_input.push(c);
-                            // All printable chars consumed by search — don't leak
-                            // to global player controls (e.g. space = pause)
-                            handled = true;
-                        }
-                        _ => {}
-                    } // match code
-                    }, // Panel::Search
+                            KeyCode::Char('q') => {
+                                app.should_quit = true;
+                            }
+                            KeyCode::Char('?') => {
+                                app.set_panel(Panel::Help);
+                            }
+                            // ── History navigation ──────────────────────────────
+                            KeyCode::Up => {
+                                app.search_history_up();
+                                handled = true; // don't let global volume handle ↑
+                            }
+                            KeyCode::Down => {
+                                app.search_history_down();
+                                handled = true;
+                            }
+                            // ── Execute search ──────────────────────────────────
+                            KeyCode::Enter => {
+                                if !app.search_input.is_empty() {
+                                    let query = app.search_input.clone();
+                                    app.cancel_search_history_nav();
+                                    app.set_status("🔍 Searching...");
+
+                                    // Spawn search in background to keep TUI responsive
+                                    let fetch_count = app.search_page_size * 5;
+                                    let q = query.clone();
+                                    let source = app.search_source.clone();
+                                    pending_search = Some((
+                                        tokio::spawn(async move {
+                                            let yt = YtDlp::new();
+                                            use crate::media::MediaBackend;
+                                            yt.search(&q, fetch_count, &source).await
+                                        }),
+                                        query,
+                                    ));
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                app.cancel_search_history_nav();
+                                app.search_input.pop();
+                            }
+                            KeyCode::Char(c) => {
+                                app.cancel_search_history_nav();
+                                app.search_input.push(c);
+                                // All printable chars consumed by search — don't leak
+                                // to global player controls (e.g. space = pause)
+                                handled = true;
+                            }
+                            _ => {}
+                        } // match code
+                    } // Panel::Search
 
                     Panel::Results => {
                         handled = true;
                         match code {
-                        KeyCode::Esc | KeyCode::Char('q') => {
-                            app.set_panel(Panel::Search);
-                        }
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            app.select_prev();
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            app.select_next();
-                        }
-                        KeyCode::Enter => {
-                            if let Some(video) = app.search_results.get(app.selected_index).cloned() {
-                                // Save position of current track before switching
-                                if let Some(ref np) = app.now_playing {
-                                    library::playback_position::save_position(
-                                        db, &np.video.id, np.position_secs, np.duration_secs,
-                                    ).ok();
-                                }
-                                app.set_status(format!("⏳ Loading: {}...", video.title));
-                                let is_fav = library::favorites::is_favorite(db, &video.id).unwrap_or(false);
-                                let in_queue = library::queue::is_in_queue(db, &video.id).unwrap_or(false);
-                                let url = video.url.clone();
-                                pending_stream = Some((
-                                    tokio::spawn(async move {
-                                        let yt = YtDlp::new();
-                                        use crate::media::MediaBackend;
-                                        yt.get_stream_url(&url).await
-                                    }),
-                                    video,
-                                    is_fav,
-                                    in_queue,
-                                ));
+                            KeyCode::Esc | KeyCode::Char('q') => {
+                                app.set_panel(Panel::Search);
                             }
-                        }
-                        KeyCode::Char('a') => {
-                            if let Some(video) = app.search_results.get(app.selected_index) {
-                                match library::queue::add_to_queue(db, video) {
-                                    Ok(true) => {
-                                        let len = library::queue::queue_length(db).unwrap_or(0);
-                                        app.set_status(format!("Added to queue (#{}) ✓", len));
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                app.select_prev();
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                app.select_next();
+                            }
+                            KeyCode::Enter => {
+                                if let Some(video) =
+                                    app.search_results.get(app.selected_index).cloned()
+                                {
+                                    // Save position of current track before switching
+                                    if let Some(ref np) = app.now_playing {
+                                        library::playback_position::save_position(
+                                            db,
+                                            &np.video.id,
+                                            np.position_secs,
+                                            np.duration_secs,
+                                        )
+                                        .ok();
                                     }
-                                    Ok(false) => {
-                                        app.set_status("⚠ Already in queue — skipped".to_string());
-                                    }
-                                    Err(e) => app.set_status(format!("Queue error: {}", e)),
+                                    app.set_status(format!("⏳ Loading: {}...", video.title));
+                                    let is_fav = library::favorites::is_favorite(db, &video.id)
+                                        .unwrap_or(false);
+                                    let in_queue =
+                                        library::queue::is_in_queue(db, &video.id).unwrap_or(false);
+                                    let url = video.url.clone();
+                                    pending_stream = Some((
+                                        tokio::spawn(async move {
+                                            let yt = YtDlp::new();
+                                            use crate::media::MediaBackend;
+                                            yt.get_stream_url(&url).await
+                                        }),
+                                        video,
+                                        is_fav,
+                                        in_queue,
+                                    ));
                                 }
                             }
-                        }
-                        KeyCode::Char('f') => {
-                            if let Some(video) = app.search_results.get(app.selected_index) {
-                                let vid = video.id.clone();
-                                let vtitle = video.title.clone();
-                                let is_fav = library::favorites::is_favorite(db, &vid)
-                                    .unwrap_or(false);
-                                if is_fav {
-                                    library::favorites::remove_favorite(db, &vid).ok();
-                                    app.set_status(format!("💔 Removed: {}", vtitle));
-                                } else {
-                                    library::favorites::add_favorite(db, video).ok();
-                                    app.set_status(format!("❤️ Favorited: {}", vtitle));
-                                }
-                                // Also sync NowPlaying if same video
-                                if let Some(ref mut np) = app.now_playing {
-                                    if np.video.id == vid {
-                                        np.is_fav = !is_fav;
+                            KeyCode::Char('a') => {
+                                if let Some(video) = app.search_results.get(app.selected_index) {
+                                    match library::queue::add_to_queue(db, video) {
+                                        Ok(true) => {
+                                            let len = library::queue::queue_length(db).unwrap_or(0);
+                                            app.set_status(format!("Added to queue (#{}) ✓", len));
+                                        }
+                                        Ok(false) => {
+                                            app.set_status(
+                                                "⚠ Already in queue — skipped".to_string(),
+                                            );
+                                        }
+                                        Err(e) => app.set_status(format!("Queue error: {}", e)),
                                     }
                                 }
                             }
-                        }
-                        KeyCode::Char('l') => {
-                            if let Some(video) = app.search_results.get(app.selected_index).cloned() {
-                                let playlists = library::playlist::list_playlists(db).unwrap_or_default();
-                                if playlists.is_empty() {
-                                    app.set_status("No playlists. Go to Playlists tab → [n] to create one");
-                                } else {
-                                    app.open_playlist_picker(video, playlists);
+                            KeyCode::Char('f') => {
+                                if let Some(video) = app.search_results.get(app.selected_index) {
+                                    let vid = video.id.clone();
+                                    let vtitle = video.title.clone();
+                                    let is_fav =
+                                        library::favorites::is_favorite(db, &vid).unwrap_or(false);
+                                    if is_fav {
+                                        library::favorites::remove_favorite(db, &vid).ok();
+                                        app.set_status(format!("💔 Removed: {}", vtitle));
+                                    } else {
+                                        library::favorites::add_favorite(db, video).ok();
+                                        app.set_status(format!("❤️ Favorited: {}", vtitle));
+                                    }
+                                    // Also sync NowPlaying if same video
+                                    if let Some(ref mut np) = app.now_playing {
+                                        if np.video.id == vid {
+                                            np.is_fav = !is_fav;
+                                        }
+                                    }
                                 }
                             }
-                        }
-                        KeyCode::Char('/') => {
-                            app.set_panel(Panel::Search);
-                            app.search_input.clear();
-                        }
-                        // ── Page navigation ──────────────────────────────
-                        KeyCode::Right => {
-                            if app.search_page + 1 < app.search_total_pages() {
-                                app.search_next_page();
-                                app.set_status(format!(
-                                    "Page {}/{}",
-                                    app.search_page + 1,
-                                    app.search_total_pages()
-                                ));
+                            KeyCode::Char('l') => {
+                                if let Some(video) =
+                                    app.search_results.get(app.selected_index).cloned()
+                                {
+                                    let playlists =
+                                        library::playlist::list_playlists(db).unwrap_or_default();
+                                    if playlists.is_empty() {
+                                        app.set_status(
+                                            "No playlists. Go to Playlists tab → [n] to create one",
+                                        );
+                                    } else {
+                                        app.open_playlist_picker(video, playlists);
+                                    }
+                                }
+                            }
+                            KeyCode::Char('/') => {
+                                app.set_panel(Panel::Search);
+                                app.search_input.clear();
+                            }
+                            // ── Page navigation ──────────────────────────────
+                            KeyCode::Right => {
+                                if app.search_page + 1 < app.search_total_pages() {
+                                    app.search_next_page();
+                                    app.set_status(format!(
+                                        "Page {}/{}",
+                                        app.search_page + 1,
+                                        app.search_total_pages()
+                                    ));
+                                }
+                            }
+                            KeyCode::Left => {
+                                if app.search_page > 0 {
+                                    app.search_prev_page();
+                                    app.set_status(format!(
+                                        "Page {}/{}",
+                                        app.search_page + 1,
+                                        app.search_total_pages()
+                                    ));
+                                }
+                            }
+                            _ => {
+                                handled = false;
                             }
                         }
-                        KeyCode::Left => {
-                            if app.search_page > 0 {
-                                app.search_prev_page();
-                                app.set_status(format!(
-                                    "Page {}/{}",
-                                    app.search_page + 1,
-                                    app.search_total_pages()
-                                ));
-                            }
-                        }
-                        _ => { handled = false; }
-                    }},
+                    }
 
                     Panel::Lyrics => {
                         match (code, modifiers) {
@@ -1700,240 +1907,333 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                             _ => {}
                         }
                         handled = true;
-                    },
+                    }
 
                     Panel::Queue => {
                         handled = true;
                         match code {
-                        KeyCode::Esc | KeyCode::Char('q') => {
-                            app.set_panel(Panel::Search);
-                        }
-                        KeyCode::Up | KeyCode::Char('k') => { app.select_prev(); }
-                        KeyCode::Down | KeyCode::Char('j') => { app.select_next(); }
-                        KeyCode::Enter => {
-                            // Play selected queue item
-                            if let Some(entry) = app.queue_items.get(app.selected_index).cloned() {
-                                if let Some(ref np) = app.now_playing {
-                                    library::playback_position::save_position(db, &np.video.id, np.position_secs, np.duration_secs).ok();
-                                }
-                                app.set_status(format!("⏳ Loading: {}...", entry.title));
-                                let video = crate::media::MediaInfo {
-                                    id: entry.video_id.clone(),
-                                    title: entry.title.clone(),
-                                    channel: entry.channel.clone(),
-                                    duration: entry.duration_secs.map(|s| s as f64),
-                                    view_count: None, thumbnail: None,
-                                    url: entry.url.clone(), description: None, source: crate::media::Source::default(), extractor_key: None,
-                                };
-                                let url = entry.url.clone();
-                                pending_stream = Some((
-                                    tokio::spawn(async move {
-                                        let yt = YtDlp::new();
-                                        use crate::media::MediaBackend;
-                                        yt.get_stream_url(&url).await
-                                    }),
-                                    video,
-                                    false,
-                                    true, // in_queue
-                                ));
+                            KeyCode::Esc | KeyCode::Char('q') => {
+                                app.set_panel(Panel::Search);
                             }
-                        }
-                        KeyCode::Char('d') => {
-                            // Copy id out first to release the immutable borrow on app.queue_items
-                            let entry_id = app.queue_items
-                                .get(app.selected_index)
-                                .map(|e| e.id);
-                            if let Some(id) = entry_id {
-                                match library::queue::remove_from_queue(db, id) {
-                                    Ok(true) => {
-                                        // Reload queue and clamp index
-                                        app.queue_items = library::queue::get_queue(db)
-                                            .unwrap_or_default();
-                                        if app.selected_index >= app.queue_items.len()
-                                            && !app.queue_items.is_empty()
-                                        {
-                                            app.selected_index = app.queue_items.len() - 1;
-                                        } else if app.queue_items.is_empty() {
-                                            app.selected_index = 0;
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                app.select_prev();
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                app.select_next();
+                            }
+                            KeyCode::Enter => {
+                                // Play selected queue item
+                                if let Some(entry) =
+                                    app.queue_items.get(app.selected_index).cloned()
+                                {
+                                    if let Some(ref np) = app.now_playing {
+                                        library::playback_position::save_position(
+                                            db,
+                                            &np.video.id,
+                                            np.position_secs,
+                                            np.duration_secs,
+                                        )
+                                        .ok();
+                                    }
+                                    app.set_status(format!("⏳ Loading: {}...", entry.title));
+                                    let video = crate::media::MediaInfo {
+                                        id: entry.video_id.clone(),
+                                        title: entry.title.clone(),
+                                        channel: entry.channel.clone(),
+                                        duration: entry.duration_secs.map(|s| s as f64),
+                                        view_count: None,
+                                        thumbnail: None,
+                                        url: entry.url.clone(),
+                                        description: None,
+                                        source: crate::media::Source::default(),
+                                        extractor_key: None,
+                                    };
+                                    let url = entry.url.clone();
+                                    pending_stream = Some((
+                                        tokio::spawn(async move {
+                                            let yt = YtDlp::new();
+                                            use crate::media::MediaBackend;
+                                            yt.get_stream_url(&url).await
+                                        }),
+                                        video,
+                                        false,
+                                        true, // in_queue
+                                    ));
+                                }
+                            }
+                            KeyCode::Char('d') => {
+                                // Copy id out first to release the immutable borrow on app.queue_items
+                                let entry_id =
+                                    app.queue_items.get(app.selected_index).map(|e| e.id);
+                                if let Some(id) = entry_id {
+                                    match library::queue::remove_from_queue(db, id) {
+                                        Ok(true) => {
+                                            // Reload queue and clamp index
+                                            app.queue_items =
+                                                library::queue::get_queue(db).unwrap_or_default();
+                                            if app.selected_index >= app.queue_items.len()
+                                                && !app.queue_items.is_empty()
+                                            {
+                                                app.selected_index = app.queue_items.len() - 1;
+                                            } else if app.queue_items.is_empty() {
+                                                app.selected_index = 0;
+                                            }
+                                            app.set_status("Removed from queue");
                                         }
-                                        app.set_status("Removed from queue");
-                                    }
-                                    Ok(false) => {
-                                        app.set_status("Item not found in queue");
-                                    }
-                                    Err(e) => {
-                                        app.set_status(format!("Remove failed: {}", e));
+                                        Ok(false) => {
+                                            app.set_status("Item not found in queue");
+                                        }
+                                        Err(e) => {
+                                            app.set_status(format!("Remove failed: {}", e));
+                                        }
                                     }
                                 }
                             }
-                        }
-                        KeyCode::Char('l') => {
-                            if let Some(entry) = app.queue_items.get(app.selected_index).cloned() {
-                                let video = crate::media::MediaInfo {
-                                    id: entry.video_id, title: entry.title,
-                                    channel: entry.channel, url: entry.url,
-                                    duration: entry.duration_secs.map(|d| d as f64),
-                                    view_count: None, thumbnail: None, description: None, source: crate::media::Source::default(), extractor_key: None,
-                                };
-                                let playlists = library::playlist::list_playlists(db).unwrap_or_default();
-                                if playlists.is_empty() {
-                                    app.set_status("No playlists. Go to Playlists tab → [n] to create one");
-                                } else {
-                                    app.open_playlist_picker(video, playlists);
+                            KeyCode::Char('l') => {
+                                if let Some(entry) =
+                                    app.queue_items.get(app.selected_index).cloned()
+                                {
+                                    let video = crate::media::MediaInfo {
+                                        id: entry.video_id,
+                                        title: entry.title,
+                                        channel: entry.channel,
+                                        url: entry.url,
+                                        duration: entry.duration_secs.map(|d| d as f64),
+                                        view_count: None,
+                                        thumbnail: None,
+                                        description: None,
+                                        source: crate::media::Source::default(),
+                                        extractor_key: None,
+                                    };
+                                    let playlists =
+                                        library::playlist::list_playlists(db).unwrap_or_default();
+                                    if playlists.is_empty() {
+                                        app.set_status(
+                                            "No playlists. Go to Playlists tab → [n] to create one",
+                                        );
+                                    } else {
+                                        app.open_playlist_picker(video, playlists);
+                                    }
                                 }
                             }
+                            _ => {
+                                handled = false;
+                            }
                         }
-                        _ => { handled = false; }
-                    }},
+                    }
 
                     Panel::Favorites => {
                         handled = true;
                         match code {
-                        KeyCode::Esc | KeyCode::Char('q') => {
-                            app.set_panel(Panel::Search);
-                        }
-                        KeyCode::Up | KeyCode::Char('k') => { app.select_prev(); }
-                        KeyCode::Down | KeyCode::Char('j') => { app.select_next(); }
-                        KeyCode::Enter => {
-                            if let Some(entry) = app.fav_items.get(app.selected_index).cloned() {
-                                if let Some(ref np) = app.now_playing {
-                                    library::playback_position::save_position(db, &np.video.id, np.position_secs, np.duration_secs).ok();
-                                }
-                                app.set_status(format!("⏳ Loading: {}...", entry.title));
-                                let in_queue = library::queue::is_in_queue(db, &entry.video_id).unwrap_or(false);
-                                let video = crate::media::MediaInfo {
-                                    id: entry.video_id.clone(), title: entry.title.clone(),
-                                    channel: entry.channel.clone(),
-                                    duration: entry.duration_secs.map(|s| s as f64),
-                                    view_count: None, thumbnail: None,
-                                    url: entry.url.clone(), description: None, source: crate::media::Source::default(), extractor_key: None,
-                                };
-                                let url = entry.url.clone();
-                                pending_stream = Some((
-                                    tokio::spawn(async move {
-                                        let yt = YtDlp::new();
-                                        use crate::media::MediaBackend;
-                                        yt.get_stream_url(&url).await
-                                    }),
-                                    video,
-                                    true, // is_fav
-                                    in_queue,
-                                ));
+                            KeyCode::Esc | KeyCode::Char('q') => {
+                                app.set_panel(Panel::Search);
                             }
-                        }
-                        KeyCode::Char('d') => {
-                            let vid = app.fav_items
-                                .get(app.selected_index)
-                                .map(|e| e.video_id.clone());
-                            if let Some(video_id) = vid {
-                                match library::favorites::remove_favorite(db, &video_id) {
-                                    Ok(true) => {
-                                        app.fav_items = library::favorites::get_favorites(db)
-                                            .unwrap_or_default();
-                                        if app.selected_index >= app.fav_items.len()
-                                            && !app.fav_items.is_empty()
-                                        {
-                                            app.selected_index = app.fav_items.len() - 1;
-                                        } else if app.fav_items.is_empty() {
-                                            app.selected_index = 0;
-                                        }
-                                        app.set_status("Removed from favorites 💔");
-                                        // Sync player if same video
-                                        if let Some(ref mut np) = app.now_playing {
-                                            if np.video.id == video_id {
-                                                np.is_fav = false;
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                app.select_prev();
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                app.select_next();
+                            }
+                            KeyCode::Enter => {
+                                if let Some(entry) = app.fav_items.get(app.selected_index).cloned()
+                                {
+                                    if let Some(ref np) = app.now_playing {
+                                        library::playback_position::save_position(
+                                            db,
+                                            &np.video.id,
+                                            np.position_secs,
+                                            np.duration_secs,
+                                        )
+                                        .ok();
+                                    }
+                                    app.set_status(format!("⏳ Loading: {}...", entry.title));
+                                    let in_queue = library::queue::is_in_queue(db, &entry.video_id)
+                                        .unwrap_or(false);
+                                    let video = crate::media::MediaInfo {
+                                        id: entry.video_id.clone(),
+                                        title: entry.title.clone(),
+                                        channel: entry.channel.clone(),
+                                        duration: entry.duration_secs.map(|s| s as f64),
+                                        view_count: None,
+                                        thumbnail: None,
+                                        url: entry.url.clone(),
+                                        description: None,
+                                        source: crate::media::Source::default(),
+                                        extractor_key: None,
+                                    };
+                                    let url = entry.url.clone();
+                                    pending_stream = Some((
+                                        tokio::spawn(async move {
+                                            let yt = YtDlp::new();
+                                            use crate::media::MediaBackend;
+                                            yt.get_stream_url(&url).await
+                                        }),
+                                        video,
+                                        true, // is_fav
+                                        in_queue,
+                                    ));
+                                }
+                            }
+                            KeyCode::Char('d') => {
+                                let vid = app
+                                    .fav_items
+                                    .get(app.selected_index)
+                                    .map(|e| e.video_id.clone());
+                                if let Some(video_id) = vid {
+                                    match library::favorites::remove_favorite(db, &video_id) {
+                                        Ok(true) => {
+                                            app.fav_items = library::favorites::get_favorites(db)
+                                                .unwrap_or_default();
+                                            if app.selected_index >= app.fav_items.len()
+                                                && !app.fav_items.is_empty()
+                                            {
+                                                app.selected_index = app.fav_items.len() - 1;
+                                            } else if app.fav_items.is_empty() {
+                                                app.selected_index = 0;
+                                            }
+                                            app.set_status("Removed from favorites 💔");
+                                            // Sync player if same video
+                                            if let Some(ref mut np) = app.now_playing {
+                                                if np.video.id == video_id {
+                                                    np.is_fav = false;
+                                                }
                                             }
                                         }
-                                    }
-                                    Ok(false) => {
-                                        app.set_status("Not found in favorites");
-                                    }
-                                    Err(e) => {
-                                        app.set_status(format!("Remove failed: {}", e));
+                                        Ok(false) => {
+                                            app.set_status("Not found in favorites");
+                                        }
+                                        Err(e) => {
+                                            app.set_status(format!("Remove failed: {}", e));
+                                        }
                                     }
                                 }
                             }
-                        }
-                        KeyCode::Char('l') => {
-                            if let Some(entry) = app.fav_items.get(app.selected_index).cloned() {
-                                let video = crate::media::MediaInfo {
-                                    id: entry.video_id, title: entry.title,
-                                    channel: entry.channel, url: entry.url,
-                                    duration: entry.duration_secs.map(|d| d as f64),
-                                    view_count: None, thumbnail: None, description: None, source: crate::media::Source::default(), extractor_key: None,
-                                };
-                                let playlists = library::playlist::list_playlists(db).unwrap_or_default();
-                                if playlists.is_empty() {
-                                    app.set_status("No playlists. Go to Playlists tab → [n] to create one");
-                                } else {
-                                    app.open_playlist_picker(video, playlists);
+                            KeyCode::Char('l') => {
+                                if let Some(entry) = app.fav_items.get(app.selected_index).cloned()
+                                {
+                                    let video = crate::media::MediaInfo {
+                                        id: entry.video_id,
+                                        title: entry.title,
+                                        channel: entry.channel,
+                                        url: entry.url,
+                                        duration: entry.duration_secs.map(|d| d as f64),
+                                        view_count: None,
+                                        thumbnail: None,
+                                        description: None,
+                                        source: crate::media::Source::default(),
+                                        extractor_key: None,
+                                    };
+                                    let playlists =
+                                        library::playlist::list_playlists(db).unwrap_or_default();
+                                    if playlists.is_empty() {
+                                        app.set_status(
+                                            "No playlists. Go to Playlists tab → [n] to create one",
+                                        );
+                                    } else {
+                                        app.open_playlist_picker(video, playlists);
+                                    }
                                 }
                             }
+                            _ => {
+                                handled = false;
+                            }
                         }
-                        _ => { handled = false; }
-                    }},
+                    }
 
                     Panel::History => {
                         handled = true;
                         match code {
-                        KeyCode::Esc | KeyCode::Char('q') => {
-                            app.set_panel(Panel::Search);
-                        }
-                        KeyCode::Up | KeyCode::Char('k') => { app.select_prev(); }
-                        KeyCode::Down | KeyCode::Char('j') => { app.select_next(); }
-                        KeyCode::Enter => {
-                            if let Some(entry) = app.history_items.get(app.selected_index).cloned() {
-                                if let Some(ref np) = app.now_playing {
-                                    library::playback_position::save_position(db, &np.video.id, np.position_secs, np.duration_secs).ok();
+                            KeyCode::Esc | KeyCode::Char('q') => {
+                                app.set_panel(Panel::Search);
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                app.select_prev();
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                app.select_next();
+                            }
+                            KeyCode::Enter => {
+                                if let Some(entry) =
+                                    app.history_items.get(app.selected_index).cloned()
+                                {
+                                    if let Some(ref np) = app.now_playing {
+                                        library::playback_position::save_position(
+                                            db,
+                                            &np.video.id,
+                                            np.position_secs,
+                                            np.duration_secs,
+                                        )
+                                        .ok();
+                                    }
+                                    app.set_status(format!("⏳ Loading: {}...", entry.title));
+                                    let is_fav =
+                                        library::favorites::is_favorite(db, &entry.video_id)
+                                            .unwrap_or(false);
+                                    let in_queue = library::queue::is_in_queue(db, &entry.video_id)
+                                        .unwrap_or(false);
+                                    let video = crate::media::MediaInfo {
+                                        id: entry.video_id.clone(),
+                                        title: entry.title.clone(),
+                                        channel: entry.channel.clone(),
+                                        duration: entry.duration_secs.map(|s| s as f64),
+                                        view_count: None,
+                                        thumbnail: None,
+                                        url: entry.url.clone(),
+                                        description: None,
+                                        source: crate::media::Source::default(),
+                                        extractor_key: None,
+                                    };
+                                    let url = entry.url.clone();
+                                    pending_stream = Some((
+                                        tokio::spawn(async move {
+                                            let yt = YtDlp::new();
+                                            use crate::media::MediaBackend;
+                                            yt.get_stream_url(&url).await
+                                        }),
+                                        video,
+                                        is_fav,
+                                        in_queue,
+                                    ));
                                 }
-                                app.set_status(format!("⏳ Loading: {}...", entry.title));
-                                let is_fav = library::favorites::is_favorite(db, &entry.video_id).unwrap_or(false);
-                                let in_queue = library::queue::is_in_queue(db, &entry.video_id).unwrap_or(false);
-                                let video = crate::media::MediaInfo {
-                                    id: entry.video_id.clone(), title: entry.title.clone(),
-                                    channel: entry.channel.clone(),
-                                    duration: entry.duration_secs.map(|s| s as f64),
-                                    view_count: None, thumbnail: None,
-                                    url: entry.url.clone(), description: None, source: crate::media::Source::default(), extractor_key: None,
-                                };
-                                let url = entry.url.clone();
-                                pending_stream = Some((
-                                    tokio::spawn(async move {
-                                        let yt = YtDlp::new();
-                                        use crate::media::MediaBackend;
-                                        yt.get_stream_url(&url).await
-                                    }),
-                                    video,
-                                    is_fav,
-                                    in_queue,
-                                ));
+                            }
+                            KeyCode::Char('l') => {
+                                if let Some(entry) =
+                                    app.history_items.get(app.selected_index).cloned()
+                                {
+                                    let video = crate::media::MediaInfo {
+                                        id: entry.video_id,
+                                        title: entry.title,
+                                        channel: entry.channel,
+                                        url: entry.url,
+                                        duration: entry.duration_secs.map(|d| d as f64),
+                                        view_count: None,
+                                        thumbnail: None,
+                                        description: None,
+                                        source: crate::media::Source::default(),
+                                        extractor_key: None,
+                                    };
+                                    let playlists =
+                                        library::playlist::list_playlists(db).unwrap_or_default();
+                                    if playlists.is_empty() {
+                                        app.set_status(
+                                            "No playlists. Go to Playlists tab → [n] to create one",
+                                        );
+                                    } else {
+                                        app.open_playlist_picker(video, playlists);
+                                    }
+                                }
+                            }
+                            _ => {
+                                handled = false;
                             }
                         }
-                        KeyCode::Char('l') => {
-                            if let Some(entry) = app.history_items.get(app.selected_index).cloned() {
-                                let video = crate::media::MediaInfo {
-                                    id: entry.video_id, title: entry.title,
-                                    channel: entry.channel, url: entry.url,
-                                    duration: entry.duration_secs.map(|d| d as f64),
-                                    view_count: None, thumbnail: None, description: None, source: crate::media::Source::default(), extractor_key: None,
-                                };
-                                let playlists = library::playlist::list_playlists(db).unwrap_or_default();
-                                if playlists.is_empty() {
-                                    app.set_status("No playlists. Go to Playlists tab → [n] to create one");
-                                } else {
-                                    app.open_playlist_picker(video, playlists);
-                                }
-                            }
-                        }
-                        _ => { handled = false; }
-                    }},
+                    }
 
                     Panel::Playlists => {
                         handled = true;
                         match code {
-                        // ── Input mode: typing a new playlist name ──
-                        _ if app.playlist_name_input.is_some() => {
-                            match code {
+                            // ── Input mode: typing a new playlist name ──
+                            _ if app.playlist_name_input.is_some() => match code {
                                 KeyCode::Esc => {
                                     app.playlist_name_input = None;
                                     app.set_status("Cancelled");
@@ -1944,8 +2244,13 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                     if !name.is_empty() {
                                         match library::playlist::create_playlist(db, &name) {
                                             Ok(_) => {
-                                                app.playlist_list = library::playlist::list_playlists(db).unwrap_or_default();
-                                                app.set_status(format!("✅ Created playlist: {}", name));
+                                                app.playlist_list =
+                                                    library::playlist::list_playlists(db)
+                                                        .unwrap_or_default();
+                                                app.set_status(format!(
+                                                    "✅ Created playlist: {}",
+                                                    name
+                                                ));
                                             }
                                             Err(e) => app.set_status(format!("Error: {}", e)),
                                         }
@@ -1964,166 +2269,237 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                     }
                                 }
                                 _ => {}
+                            },
+                            KeyCode::Esc | KeyCode::Char('q') => {
+                                if app.playlist_items_view.is_some() {
+                                    // Go back to playlist list
+                                    app.playlist_items_view = None;
+                                    app.playlist_list =
+                                        library::playlist::list_playlists(db).unwrap_or_default();
+                                    app.selected_index = 0;
+                                } else {
+                                    app.set_panel(Panel::Search);
+                                }
                             }
-                        }
-                        KeyCode::Esc | KeyCode::Char('q') => {
-                            if app.playlist_items_view.is_some() {
-                                // Go back to playlist list
-                                app.playlist_items_view = None;
-                                app.playlist_list = library::playlist::list_playlists(db).unwrap_or_default();
-                                app.selected_index = 0;
-                            } else {
-                                app.set_panel(Panel::Search);
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                app.select_prev();
                             }
-                        }
-                        KeyCode::Up | KeyCode::Char('k') => { app.select_prev(); }
-                        KeyCode::Down | KeyCode::Char('j') => { app.select_next(); }
-                        KeyCode::Enter => {
-                            if app.playlist_items_view.is_some() {
-                                // Play selected item from playlist items view
-                                // Clone out the items + selected index before mutating
-                                let play_info = app.playlist_items_view.as_ref().and_then(|(_, items)| {
-                                    items.get(app.selected_index).cloned().map(|item| {
-                                        let remaining: Vec<_> = items.iter().skip(app.selected_index + 1).cloned().collect();
-                                        (item, remaining)
-                                    })
-                                });
-                                if let Some((item, remaining_items)) = play_info {
-                                    if let Some(ref np) = app.now_playing {
-                                        library::playback_position::save_position(db, &np.video.id, np.position_secs, np.duration_secs).ok();
-                                    }
-                                    app.set_status(format!("⏳ Loading: {}...", item.title));
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                app.select_next();
+                            }
+                            KeyCode::Enter => {
+                                if app.playlist_items_view.is_some() {
+                                    // Play selected item from playlist items view
+                                    // Clone out the items + selected index before mutating
+                                    let play_info =
+                                        app.playlist_items_view.as_ref().and_then(|(_, items)| {
+                                            items.get(app.selected_index).cloned().map(|item| {
+                                                let remaining: Vec<_> = items
+                                                    .iter()
+                                                    .skip(app.selected_index + 1)
+                                                    .cloned()
+                                                    .collect();
+                                                (item, remaining)
+                                            })
+                                        });
+                                    if let Some((item, remaining_items)) = play_info {
+                                        if let Some(ref np) = app.now_playing {
+                                            library::playback_position::save_position(
+                                                db,
+                                                &np.video.id,
+                                                np.position_secs,
+                                                np.duration_secs,
+                                            )
+                                            .ok();
+                                        }
+                                        app.set_status(format!("⏳ Loading: {}...", item.title));
 
-                                    // Queue remaining playlist items (fast DB I/O)
-                                    library::queue::clear_queue(db).ok();
-                                    let mut queued = 0usize;
-                                    for ri in &remaining_items {
-                                        let rv = crate::media::MediaInfo {
-                                            id: ri.video_id.clone(), title: ri.title.clone(),
-                                            channel: ri.channel.clone(), url: ri.url.clone(),
-                                            duration: ri.duration_secs.map(|d| d as f64),
-                                            view_count: None, thumbnail: None, description: None, source: crate::media::Source::default(), extractor_key: None,
+                                        // Queue remaining playlist items (fast DB I/O)
+                                        library::queue::clear_queue(db).ok();
+                                        let mut queued = 0usize;
+                                        for ri in &remaining_items {
+                                            let rv = crate::media::MediaInfo {
+                                                id: ri.video_id.clone(),
+                                                title: ri.title.clone(),
+                                                channel: ri.channel.clone(),
+                                                url: ri.url.clone(),
+                                                duration: ri.duration_secs.map(|d| d as f64),
+                                                view_count: None,
+                                                thumbnail: None,
+                                                description: None,
+                                                source: crate::media::Source::default(),
+                                                extractor_key: None,
+                                            };
+                                            if library::queue::add_to_queue(db, &rv)
+                                                .unwrap_or(false)
+                                            {
+                                                queued += 1;
+                                            }
+                                        }
+                                        app.queue_items =
+                                            library::queue::get_queue(db).unwrap_or_default();
+
+                                        let video = crate::media::MediaInfo {
+                                            id: item.video_id.clone(),
+                                            title: item.title.clone(),
+                                            channel: item.channel.clone(),
+                                            url: item.url.clone(),
+                                            duration: item.duration_secs.map(|d| d as f64),
+                                            view_count: None,
+                                            thumbnail: None,
+                                            description: None,
+                                            source: crate::media::Source::default(),
+                                            extractor_key: None,
                                         };
-                                        if library::queue::add_to_queue(db, &rv).unwrap_or(false) { queued += 1; }
+                                        let url = item.url.clone();
+                                        pending_stream = Some((
+                                            tokio::spawn(async move {
+                                                let yt = YtDlp::new();
+                                                use crate::media::MediaBackend;
+                                                yt.get_stream_url(&url).await
+                                            }),
+                                            video,
+                                            false,
+                                            false,
+                                        ));
+                                        if queued > 0 {
+                                            app.set_status(format!(
+                                                "⏳ Loading: {} · {} more queued",
+                                                item.title, queued
+                                            ));
+                                        }
                                     }
-                                    app.queue_items = library::queue::get_queue(db).unwrap_or_default();
-
-                                    let video = crate::media::MediaInfo {
-                                        id: item.video_id.clone(), title: item.title.clone(),
-                                        channel: item.channel.clone(), url: item.url.clone(),
-                                        duration: item.duration_secs.map(|d| d as f64),
-                                        view_count: None, thumbnail: None, description: None, source: crate::media::Source::default(), extractor_key: None,
-                                    };
-                                    let url = item.url.clone();
-                                    pending_stream = Some((
-                                        tokio::spawn(async move {
-                                            let yt = YtDlp::new();
-                                            use crate::media::MediaBackend;
-                                            yt.get_stream_url(&url).await
-                                        }),
-                                        video,
-                                        false,
-                                        false,
-                                    ));
-                                    if queued > 0 {
-                                        app.set_status(format!("⏳ Loading: {} · {} more queued", item.title, queued));
+                                } else {
+                                    // Enter playlist detail view
+                                    if let Some(pl) = app.playlist_list.get(app.selected_index) {
+                                        let name = pl.name.clone();
+                                        match library::playlist::get_playlist_items(db, &name) {
+                                            Ok(items) => {
+                                                app.playlist_items_view = Some((name, items));
+                                                app.selected_index = 0;
+                                            }
+                                            Err(e) => app.set_status(format!("Error: {}", e)),
+                                        }
                                     }
                                 }
-                            } else {
-                                // Enter playlist detail view
+                            }
+                            // Play entire playlist (load to queue)
+                            KeyCode::Char('p') if app.playlist_items_view.is_none() => {
                                 if let Some(pl) = app.playlist_list.get(app.selected_index) {
-                                    let name = pl.name.clone();
-                                    match library::playlist::get_playlist_items(db, &name) {
-                                        Ok(items) => {
-                                            app.playlist_items_view = Some((name, items));
-                                            app.selected_index = 0;
+                                    library::queue::clear_queue(db).ok();
+                                    match library::playlist::load_playlist_to_queue(db, &pl.name) {
+                                        Ok(count) => {
+                                            app.queue_items =
+                                                library::queue::get_queue(db).unwrap_or_default();
+                                            app.set_status(format!(
+                                                "🎶 Loaded {} tracks from '{}' into queue",
+                                                count, pl.name
+                                            ));
+                                            // Auto-play first
+                                            if let Some(entry) =
+                                                library::queue::pop_next(db).unwrap_or(None)
+                                            {
+                                                app.set_status(format!(
+                                                    "⏳ Loading: {}...",
+                                                    entry.title
+                                                ));
+                                                let video = crate::media::MediaInfo {
+                                                    id: entry.video_id.clone(),
+                                                    title: entry.title.clone(),
+                                                    channel: entry.channel.clone(),
+                                                    url: entry.url.clone(),
+                                                    duration: entry.duration_secs.map(|d| d as f64),
+                                                    view_count: None,
+                                                    thumbnail: None,
+                                                    description: None,
+                                                    source: crate::media::Source::default(),
+                                                    extractor_key: None,
+                                                };
+                                                let url = entry.url.clone();
+                                                pending_stream = Some((
+                                                    tokio::spawn(async move {
+                                                        let yt = YtDlp::new();
+                                                        use crate::media::MediaBackend;
+                                                        yt.get_stream_url(&url).await
+                                                    }),
+                                                    video,
+                                                    false,
+                                                    false,
+                                                ));
+                                            }
                                         }
                                         Err(e) => app.set_status(format!("Error: {}", e)),
                                     }
                                 }
                             }
-                        }
-                        // Play entire playlist (load to queue)
-                        KeyCode::Char('p') if app.playlist_items_view.is_none() => {
-                            if let Some(pl) = app.playlist_list.get(app.selected_index) {
-                                library::queue::clear_queue(db).ok();
-                                match library::playlist::load_playlist_to_queue(db, &pl.name) {
-                                    Ok(count) => {
-                                        app.queue_items = library::queue::get_queue(db).unwrap_or_default();
-                                        app.set_status(format!("🎶 Loaded {} tracks from '{}' into queue", count, pl.name));
-                                        // Auto-play first
-                                        if let Some(entry) = library::queue::pop_next(db).unwrap_or(None) {
-                                            app.set_status(format!("⏳ Loading: {}...", entry.title));
-                                            let video = crate::media::MediaInfo {
-                                                id: entry.video_id.clone(), title: entry.title.clone(),
-                                                channel: entry.channel.clone(), url: entry.url.clone(),
-                                                duration: entry.duration_secs.map(|d| d as f64),
-                                                view_count: None, thumbnail: None, description: None, source: crate::media::Source::default(), extractor_key: None,
-                                            };
-                                            let url = entry.url.clone();
-                                            pending_stream = Some((
-                                                tokio::spawn(async move {
-                                                    let yt = YtDlp::new();
-                                                    use crate::media::MediaBackend;
-                                                    yt.get_stream_url(&url).await
-                                                }),
-                                                video,
-                                                false,
-                                                false,
-                                            ));
+                            // New playlist: n (only in list view)
+                            KeyCode::Char('n') if app.playlist_items_view.is_none() => {
+                                app.playlist_name_input = Some(String::new());
+                                app.set_status("Enter a name for the new playlist");
+                            }
+                            // Delete item from playlist (detail view)
+                            KeyCode::Char('d') if app.playlist_items_view.is_some() => {
+                                // Clone out the info we need
+                                let info =
+                                    app.playlist_items_view.as_ref().and_then(|(name, items)| {
+                                        items.get(app.selected_index).map(|item| {
+                                            (
+                                                name.clone(),
+                                                item.video_id.clone(),
+                                                item.title.clone(),
+                                            )
+                                        })
+                                    });
+                                if let Some((pl_name, vid, title)) = info {
+                                    match library::playlist::remove_from_playlist(
+                                        db, &pl_name, &vid,
+                                    ) {
+                                        Ok(true) => {
+                                            // Reload items
+                                            let items =
+                                                library::playlist::get_playlist_items(db, &pl_name)
+                                                    .unwrap_or_default();
+                                            if app.selected_index >= items.len()
+                                                && !items.is_empty()
+                                            {
+                                                app.selected_index = items.len() - 1;
+                                            } else if items.is_empty() {
+                                                app.selected_index = 0;
+                                            }
+                                            app.playlist_items_view = Some((pl_name, items));
+                                            app.set_status(format!("🗑 Removed: {}", title));
                                         }
+                                        Ok(false) => app.set_status("Item not found"),
+                                        Err(e) => app.set_status(format!("Error: {}", e)),
                                     }
-                                    Err(e) => app.set_status(format!("Error: {}", e)),
                                 }
                             }
-                        }
-                        // New playlist: n (only in list view)
-                        KeyCode::Char('n') if app.playlist_items_view.is_none() => {
-                            app.playlist_name_input = Some(String::new());
-                            app.set_status("Enter a name for the new playlist");
-                        }
-                        // Delete item from playlist (detail view)
-                        KeyCode::Char('d') if app.playlist_items_view.is_some() => {
-                            // Clone out the info we need
-                            let info = app.playlist_items_view.as_ref().and_then(|(name, items)| {
-                                items.get(app.selected_index).map(|item| (name.clone(), item.video_id.clone(), item.title.clone()))
-                            });
-                            if let Some((pl_name, vid, title)) = info {
-                                match library::playlist::remove_from_playlist(db, &pl_name, &vid) {
-                                    Ok(true) => {
-                                        // Reload items
-                                        let items = library::playlist::get_playlist_items(db, &pl_name).unwrap_or_default();
-                                        if app.selected_index >= items.len() && !items.is_empty() {
-                                            app.selected_index = items.len() - 1;
-                                        } else if items.is_empty() {
-                                            app.selected_index = 0;
+                            // Delete playlist: d (only in list view)
+                            KeyCode::Char('d') if app.playlist_items_view.is_none() => {
+                                if let Some(pl) = app.playlist_list.get(app.selected_index) {
+                                    let name = pl.name.clone();
+                                    match library::playlist::delete_playlist(db, &name) {
+                                        Ok(_) => {
+                                            app.playlist_list =
+                                                library::playlist::list_playlists(db)
+                                                    .unwrap_or_default();
+                                            if app.selected_index > 0
+                                                && app.selected_index >= app.playlist_list.len()
+                                            {
+                                                app.selected_index =
+                                                    app.playlist_list.len().saturating_sub(1);
+                                            }
+                                            app.set_status(format!("🗑 Deleted playlist: {}", name));
                                         }
-                                        app.playlist_items_view = Some((pl_name, items));
-                                        app.set_status(format!("🗑 Removed: {}", title));
+                                        Err(e) => app.set_status(format!("Error: {}", e)),
                                     }
-                                    Ok(false) => app.set_status("Item not found"),
-                                    Err(e) => app.set_status(format!("Error: {}", e)),
                                 }
                             }
-                        }
-                        // Delete playlist: d (only in list view)
-                        KeyCode::Char('d') if app.playlist_items_view.is_none() => {
-                            if let Some(pl) = app.playlist_list.get(app.selected_index) {
-                                let name = pl.name.clone();
-                                match library::playlist::delete_playlist(db, &name) {
-                                    Ok(_) => {
-                                        app.playlist_list = library::playlist::list_playlists(db).unwrap_or_default();
-                                        if app.selected_index > 0 && app.selected_index >= app.playlist_list.len() {
-                                            app.selected_index = app.playlist_list.len().saturating_sub(1);
-                                        }
-                                        app.set_status(format!("🗑 Deleted playlist: {}", name));
-                                    }
-                                    Err(e) => app.set_status(format!("Error: {}", e)),
-                                }
+                            _ => {
+                                handled = false;
                             }
                         }
-                        _ => { handled = false; }
-                    }},
+                    }
 
                     Panel::Chat => match code {
                         KeyCode::Esc => {
@@ -2145,25 +2521,43 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
 
                                                 match ai_chat(ctx, &input, &resolved).await {
                                                     Ok(response) => {
-                                                        app.push_chat_message("assistant", &response);
+                                                        app.push_chat_message(
+                                                            "assistant",
+                                                            &response,
+                                                        );
                                                         app.set_status("Reply received");
                                                     }
                                                     Err(e) => {
-                                                        app.push_chat_message("assistant", &format!("Error: {}", e));
-                                                        app.set_status(format!("Chat error: {}", e));
+                                                        app.push_chat_message(
+                                                            "assistant",
+                                                            &format!("Error: {}", e),
+                                                        );
+                                                        app.set_status(format!(
+                                                            "Chat error: {}",
+                                                            e
+                                                        ));
                                                     }
                                                 }
                                                 app.chat_loading = false;
                                             }
                                             Err(e) => {
-                                                app.push_chat_message("assistant", &format!("Config error: {}", e));
+                                                app.push_chat_message(
+                                                    "assistant",
+                                                    &format!("Config error: {}", e),
+                                                );
                                             }
                                         }
                                     } else {
-                                        app.push_chat_message("assistant", "AI not configured. Run: aux config ai --setup");
+                                        app.push_chat_message(
+                                            "assistant",
+                                            "AI not configured. Run: aux config ai --setup",
+                                        );
                                     }
                                 } else {
-                                    app.push_chat_message("assistant", "Play a track first to chat about it!");
+                                    app.push_chat_message(
+                                        "assistant",
+                                        "Play a track first to chat about it!",
+                                    );
                                 }
                             }
                             handled = true;
@@ -2222,17 +2616,35 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                             }
                         }
                         // Seek ±10s (non-list panels) or Shift+←/→ everywhere
-                        (KeyCode::Left, KeyModifiers::NONE) if !matches!(app.panel, Panel::Results | Panel::Queue | Panel::History) => {
-                            if let Some(ref p) = player { p.seek(-10.0).await.ok(); }
+                        (KeyCode::Left, KeyModifiers::NONE)
+                            if !matches!(
+                                app.panel,
+                                Panel::Results | Panel::Queue | Panel::History
+                            ) =>
+                        {
+                            if let Some(ref p) = player {
+                                p.seek(-10.0).await.ok();
+                            }
                         }
-                        (KeyCode::Right, KeyModifiers::NONE) if !matches!(app.panel, Panel::Results | Panel::Queue | Panel::History) => {
-                            if let Some(ref p) = player { p.seek(10.0).await.ok(); }
+                        (KeyCode::Right, KeyModifiers::NONE)
+                            if !matches!(
+                                app.panel,
+                                Panel::Results | Panel::Queue | Panel::History
+                            ) =>
+                        {
+                            if let Some(ref p) = player {
+                                p.seek(10.0).await.ok();
+                            }
                         }
                         (KeyCode::Left, KeyModifiers::SHIFT) => {
-                            if let Some(ref p) = player { p.seek(-60.0).await.ok(); }
+                            if let Some(ref p) = player {
+                                p.seek(-60.0).await.ok();
+                            }
                         }
                         (KeyCode::Right, KeyModifiers::SHIFT) => {
-                            if let Some(ref p) = player { p.seek(60.0).await.ok(); }
+                            if let Some(ref p) = player {
+                                p.seek(60.0).await.ok();
+                            }
                         }
                         // Volume ↑/↓ removed from global block:
                         //   • Search panel: ↑/↓ navigate search history
@@ -2287,8 +2699,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                             // Save position of current track before skipping
                             if let Some(ref np) = app.now_playing {
                                 library::playback_position::save_position(
-                                    db, &np.video.id, np.position_secs, np.duration_secs,
-                                ).ok();
+                                    db,
+                                    &np.video.id,
+                                    np.position_secs,
+                                    np.duration_secs,
+                                )
+                                .ok();
                             }
                             if let Some(ref p) = player {
                                 p.seek_to(999999.0).await.ok();
@@ -2307,8 +2723,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                             // Save position before stopping
                             if let Some(ref np) = app.now_playing {
                                 library::playback_position::save_position(
-                                    db, &np.video.id, np.position_secs, np.duration_secs,
-                                ).ok();
+                                    db,
+                                    &np.video.id,
+                                    np.position_secs,
+                                    np.duration_secs,
+                                )
+                                .ok();
                             }
                             if let Some(mut p) = player.take() {
                                 p.stop().await.ok();
@@ -2325,7 +2745,9 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 state.write().ok();
                                 // Tell mpv to loop (RepeatOne = loop-file inf)
                                 if let Some(ref p) = player {
-                                    p.set_loop_file(state.repeat == crate::player::RepeatMode::One).await.ok();
+                                    p.set_loop_file(state.repeat == crate::player::RepeatMode::One)
+                                        .await
+                                        .ok();
                                 }
                                 app.set_status(format!("Repeat: {}", label));
                             }
@@ -2336,7 +2758,10 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 state.shuffle = !state.shuffle;
                                 let on = state.shuffle;
                                 state.write().ok();
-                                app.set_status(format!("Shuffle: {}", if on { "on 🔀" } else { "off" }));
+                                app.set_status(format!(
+                                    "Shuffle: {}",
+                                    if on { "on 🔀" } else { "off" }
+                                ));
                             }
                         }
                         // Favorite: f
@@ -2353,7 +2778,8 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 }
                                 // Reload favorites list if visible
                                 if app.panel == Panel::Favorites {
-                                    app.fav_items = library::favorites::get_favorites(db).unwrap_or_default();
+                                    app.fav_items =
+                                        library::favorites::get_favorites(db).unwrap_or_default();
                                 }
                             }
                         }
@@ -2361,10 +2787,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                         (KeyCode::Char('a'), _) => {
                             if let Some(ref mut np) = app.now_playing {
                                 if np.in_queue {
-                                    library::queue::remove_from_queue_by_video_id(db, &np.video.id).ok();
+                                    library::queue::remove_from_queue_by_video_id(db, &np.video.id)
+                                        .ok();
                                     np.in_queue = false;
                                     // Reload queue panel if visible
-                                    app.queue_items = library::queue::get_queue(db).unwrap_or_default();
+                                    app.queue_items =
+                                        library::queue::get_queue(db).unwrap_or_default();
                                     app.set_status("📋✗ Removed from queue");
                                 } else {
                                     match library::queue::add_to_queue(db, &np.video) {
@@ -2372,7 +2800,8 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                             np.in_queue = true;
                                             let len = library::queue::queue_length(db).unwrap_or(0);
                                             // Reload queue panel if visible
-                                            app.queue_items = library::queue::get_queue(db).unwrap_or_default();
+                                            app.queue_items =
+                                                library::queue::get_queue(db).unwrap_or_default();
                                             app.set_status(format!("📋 Added to queue (#{})", len));
                                         }
                                         Err(e) => app.set_status(format!("Queue error: {}", e)),
@@ -2386,20 +2815,22 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                             if let Ok(mut state) = crate::player::state::StateFile::read() {
                                 let now = Utc::now();
                                 // Determine next step based on current remaining time
-                                let remaining_mins = state.sleep_deadline
+                                let remaining_mins = state
+                                    .sleep_deadline
                                     .map(|d| (d - now).num_minutes().max(0))
                                     .unwrap_or(0);
-                                let (next_mins, label) = if remaining_mins == 0 || state.sleep_deadline.is_none() {
-                                    (15, "15min")
-                                } else if remaining_mins <= 15 {
-                                    (30, "30min")
-                                } else if remaining_mins <= 30 {
-                                    (60, "1h")
-                                } else if remaining_mins <= 60 {
-                                    (120, "2h")
-                                } else {
-                                    (0, "off") // cancel
-                                };
+                                let (next_mins, label) =
+                                    if remaining_mins == 0 || state.sleep_deadline.is_none() {
+                                        (15, "15min")
+                                    } else if remaining_mins <= 15 {
+                                        (30, "30min")
+                                    } else if remaining_mins <= 30 {
+                                        (60, "1h")
+                                    } else if remaining_mins <= 60 {
+                                        (120, "2h")
+                                    } else {
+                                        (0, "off") // cancel
+                                    };
 
                                 if next_mins == 0 {
                                     state.sleep_deadline = None;
@@ -2409,7 +2840,11 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                     let deadline = now + chrono::Duration::minutes(next_mins);
                                     state.sleep_deadline = Some(deadline);
                                     state.write().ok();
-                                    app.set_status(format!("😴 Sleep in {} ({})", label, deadline.format("%H:%M")));
+                                    app.set_status(format!(
+                                        "😴 Sleep in {} ({})",
+                                        label,
+                                        deadline.format("%H:%M")
+                                    ));
                                 }
                             }
                         }
@@ -2442,20 +2877,7 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
             }
         }
 
-        // ─── Sleep timer check ───────────────────────────────────
-        if let Ok(state) = crate::player::state::StateFile::read() {
-            if let Some(deadline) = state.sleep_deadline {
-                if chrono::Utc::now() >= deadline {
-                    // Sleep timer expired — stop playback
-                    if let Some(mut p) = player.take() {
-                        p.stop().await.ok();
-                    }
-                    crate::player::state::StateFile::remove().ok();
-                    app.now_playing = None;
-                    app.set_status("😴 Sleep timer expired — playback stopped");
-                }
-            }
-        }
+        // Sleep timer check removed — already handled in the mpv poll block above
 
         if app.should_quit {
             break;
@@ -2465,8 +2887,12 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
     // Save position before cleanup
     if let Some(ref np) = app.now_playing {
         library::playback_position::save_position(
-            db, &np.video.id, np.position_secs, np.duration_secs,
-        ).ok();
+            db,
+            &np.video.id,
+            np.position_secs,
+            np.duration_secs,
+        )
+        .ok();
     }
 
     // Cleanup
@@ -2542,13 +2968,27 @@ async fn cmd_config(action: Option<ConfigAction>, config: &mut Config) -> Result
         Some(ConfigAction::Player { action: None }) => {
             cc::show_player(config);
         }
-        Some(ConfigAction::Player { action: Some(PlayerAction::Set { volume, search_results, backend }) }) => {
+        Some(ConfigAction::Player {
+            action:
+                Some(PlayerAction::Set {
+                    volume,
+                    search_results,
+                    backend,
+                }),
+        }) => {
             cc::player_set(config, volume, search_results, backend)?;
         }
         Some(ConfigAction::Media { action: None }) => {
             cc::show_media(config);
         }
-        Some(ConfigAction::Media { action: Some(MediaAction::Set { format, backend, default_source }) }) => {
+        Some(ConfigAction::Media {
+            action:
+                Some(MediaAction::Set {
+                    format,
+                    backend,
+                    default_source,
+                }),
+        }) => {
             cc::media_set(config, format, backend, default_source)?;
         }
         Some(ConfigAction::Set { key, value }) => {

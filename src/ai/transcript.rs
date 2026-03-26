@@ -64,8 +64,7 @@ fn parse_vtt(content: &str) -> Vec<TranscriptSegment> {
                 // Collect text lines until empty line or next timestamp
                 let mut text_lines = Vec::new();
                 i += 1;
-                while i < lines.len() && !lines[i].trim().is_empty() && !lines[i].contains("-->")
-                {
+                while i < lines.len() && !lines[i].trim().is_empty() && !lines[i].contains("-->") {
                     let text = lines[i]
                         .trim()
                         // Strip VTT formatting tags
@@ -209,11 +208,14 @@ async fn fetch_vtt_transcript(video_url: &str) -> Result<Option<Transcript>> {
         .args([
             "--write-sub",
             "--write-auto-sub",
-            "--sub-lang", "en.*,vi.*,en,vi",
-            "--sub-format", "vtt",
+            "--sub-lang",
+            "en.*,vi.*,en,vi",
+            "--sub-format",
+            "vtt",
             "--skip-download",
             "--no-warnings",
-            "-o", &output_template_str,
+            "-o",
+            &output_template_str,
             video_url,
         ])
         .current_dir(&temp_dir)
@@ -263,7 +265,10 @@ async fn fetch_vtt_transcript(video_url: &str) -> Result<Option<Transcript>> {
             if segments.is_empty() {
                 Ok(None)
             } else {
-                Ok(Some(Transcript { language: lang, segments }))
+                Ok(Some(Transcript {
+                    language: lang,
+                    segments,
+                }))
             }
         }
         None => Ok(None),
@@ -275,7 +280,8 @@ async fn fetch_vtt_transcript(video_url: &str) -> Result<Option<Transcript>> {
 async fn fetch_description_transcript(video_url: &str) -> Option<Transcript> {
     let output = Command::new("yt-dlp")
         .args([
-            "--print", "description",
+            "--print",
+            "description",
             "--no-warnings",
             "--skip-download",
             video_url,

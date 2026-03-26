@@ -2,9 +2,9 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+use super::transcript::Transcript;
 use crate::config::ResolvedAiConfig;
 use crate::media::MediaInfo;
-use super::transcript::Transcript;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {

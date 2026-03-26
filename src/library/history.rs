@@ -1,6 +1,6 @@
-use anyhow::Result;
-use crate::media::MediaInfo;
 use super::db::Database;
+use crate::media::MediaInfo;
+use anyhow::Result;
 
 /// Add a video to play history
 pub fn add_to_history(db: &Database, video: &MediaInfo, listened_secs: u64) -> Result<()> {
@@ -39,7 +39,9 @@ pub fn get_history(db: &Database, limit: usize) -> Result<Vec<HistoryEntry>> {
                 duration_secs: row.get(4)?,
                 listened_secs: row.get(5)?,
                 played_at: row.get(6)?,
-                source: row.get::<_, String>(7).unwrap_or_else(|_| "youtube".to_string()),
+                source: row
+                    .get::<_, String>(7)
+                    .unwrap_or_else(|_| "youtube".to_string()),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -66,7 +68,9 @@ pub fn get_today_history(db: &Database) -> Result<Vec<HistoryEntry>> {
                 duration_secs: row.get(4)?,
                 listened_secs: row.get(5)?,
                 played_at: row.get(6)?,
-                source: row.get::<_, String>(7).unwrap_or_else(|_| "youtube".to_string()),
+                source: row
+                    .get::<_, String>(7)
+                    .unwrap_or_else(|_| "youtube".to_string()),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -91,7 +95,9 @@ pub fn get_history_since(db: &Database, since: &str) -> Result<Vec<HistoryEntry>
                 duration_secs: row.get(4)?,
                 listened_secs: row.get(5)?,
                 played_at: row.get(6)?,
-                source: row.get::<_, String>(7).unwrap_or_else(|_| "youtube".to_string()),
+                source: row
+                    .get::<_, String>(7)
+                    .unwrap_or_else(|_| "youtube".to_string()),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -115,7 +121,9 @@ pub fn get_all_history(db: &Database) -> Result<Vec<HistoryEntry>> {
                 duration_secs: row.get(4)?,
                 listened_secs: row.get(5)?,
                 played_at: row.get(6)?,
-                source: row.get::<_, String>(7).unwrap_or_else(|_| "youtube".to_string()),
+                source: row
+                    .get::<_, String>(7)
+                    .unwrap_or_else(|_| "youtube".to_string()),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;

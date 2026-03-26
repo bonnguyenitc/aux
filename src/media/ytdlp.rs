@@ -1,10 +1,10 @@
 use anyhow::{bail, Context, Result};
 use tokio::process::Command;
 
-use crate::error::AuxError;
 use super::source::Source;
-use super::types::{StreamUrl, MediaInfo};
+use super::types::{MediaInfo, StreamUrl};
 use super::MediaBackend;
+use crate::error::AuxError;
 
 pub struct YtDlp;
 
@@ -43,7 +43,9 @@ impl YtDlp {
         let resolved = if !url.contains('.')
             && !url.starts_with("http")
             && url.len() == 11
-            && url.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+            && url
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
         {
             format!("https://www.youtube.com/watch?v={}", url)
         } else {
@@ -63,12 +65,13 @@ impl YtDlp {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         // Take only the first JSON line (handles playlists gracefully)
-        let first_line = stdout.lines().find(|l| !l.trim().is_empty()).ok_or_else(|| {
-            anyhow::anyhow!("yt-dlp returned no output for URL: {}", url)
-        })?;
+        let first_line = stdout
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("yt-dlp returned no output for URL: {}", url))?;
 
-        let mut info: MediaInfo = serde_json::from_str(first_line)
-            .context("Failed to parse yt-dlp JSON output")?;
+        let mut info: MediaInfo =
+            serde_json::from_str(first_line).context("Failed to parse yt-dlp JSON output")?;
 
         info.resolve_source();
 
@@ -79,7 +82,10 @@ impl YtDlp {
 impl MediaBackend for YtDlp {
     async fn search(&self, query: &str, limit: usize, source: &Source) -> Result<Vec<MediaInfo>> {
         let prefix = source.search_prefix().ok_or_else(|| {
-            anyhow::anyhow!("{} does not support search. Use a direct URL instead.", source)
+            anyhow::anyhow!(
+                "{} does not support search. Use a direct URL instead.",
+                source
+            )
         })?;
 
         let search_query = format!("{}{}:{}", prefix, limit, query);
@@ -140,14 +146,10 @@ impl MediaBackend for YtDlp {
             bail!(AuxError::YtDlpError(stderr.to_string()));
         }
 
-        let audio_url = String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .to_string();
+        let audio_url = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
         if audio_url.is_empty() {
-            bail!(AuxError::PlaybackError(
-                "No audio stream found".to_string()
-            ));
+            bail!(AuxError::PlaybackError("No audio stream found".to_string()));
         }
 
         Ok(StreamUrl {

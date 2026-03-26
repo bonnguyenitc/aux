@@ -1,6 +1,6 @@
-use anyhow::Result;
-use crate::media::MediaInfo;
 use super::db::Database;
+use crate::media::MediaInfo;
+use anyhow::Result;
 
 /// Add a video to favorites
 pub fn add_favorite(db: &Database, video: &MediaInfo) -> Result<bool> {
@@ -23,10 +23,7 @@ pub fn add_favorite(db: &Database, video: &MediaInfo) -> Result<bool> {
 /// Remove a video from favorites
 pub fn remove_favorite(db: &Database, video_id: &str) -> Result<bool> {
     let conn = db.connection();
-    let result = conn.execute(
-        "DELETE FROM favorites WHERE video_id = ?1",
-        [video_id],
-    )?;
+    let result = conn.execute("DELETE FROM favorites WHERE video_id = ?1", [video_id])?;
     Ok(result > 0)
 }
 
@@ -58,7 +55,9 @@ pub fn get_favorites(db: &Database) -> Result<Vec<FavoriteEntry>> {
                 url: row.get(3)?,
                 duration_secs: row.get(4)?,
                 added_at: row.get(5)?,
-                source: row.get::<_, String>(6).unwrap_or_else(|_| "youtube".to_string()),
+                source: row
+                    .get::<_, String>(6)
+                    .unwrap_or_else(|_| "youtube".to_string()),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;

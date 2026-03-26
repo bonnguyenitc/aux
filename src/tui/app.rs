@@ -1,10 +1,10 @@
-use chrono::{DateTime, Utc};
 use crate::ai::chat::ChatMessage;
 use crate::ai::transcript::Transcript;
 use crate::library::favorites::FavoriteEntry;
 use crate::library::playlist::Playlist;
-use crate::player::types::RepeatMode;
 use crate::media::{MediaInfo, Source};
+use crate::player::types::RepeatMode;
+use chrono::{DateTime, Utc};
 
 /// Active body panel shown in the TUI
 #[derive(Debug, Clone, PartialEq)]
@@ -248,7 +248,9 @@ impl App {
     /// Total number of search result pages
     pub fn search_total_pages(&self) -> usize {
         let total = self.all_search_results.len();
-        if total == 0 { return 1; }
+        if total == 0 {
+            return 1;
+        }
         (total + self.search_page_size - 1) / self.search_page_size
     }
 
@@ -288,13 +290,7 @@ impl App {
         self.search_page * self.search_page_size + local_idx
     }
 
-    pub fn update_playback(
-        &mut self,
-        position: u64,
-        duration: u64,
-        paused: bool,
-        volume: u8,
-    ) {
+    pub fn update_playback(&mut self, position: u64, duration: u64, paused: bool, volume: u8) {
         if let Some(ref mut np) = self.now_playing {
             np.position_secs = position;
             np.duration_secs = duration;
@@ -358,10 +354,18 @@ impl App {
     /// Cycle through searchable sources (YouTube → SoundCloud → YT Music → …)
     pub fn cycle_search_source(&mut self) {
         let searchable = Source::searchable();
-        if searchable.is_empty() { return; }
-        let current_pos = searchable.iter().position(|s| s == &self.search_source).unwrap_or(0);
+        if searchable.is_empty() {
+            return;
+        }
+        let current_pos = searchable
+            .iter()
+            .position(|s| s == &self.search_source)
+            .unwrap_or(0);
         let next_pos = (current_pos + 1) % searchable.len();
         self.search_source = searchable[next_pos].clone();
-        self.set_status(format!("Search source: {}", self.search_source.display_name()));
+        self.set_status(format!(
+            "Search source: {}",
+            self.search_source.display_name()
+        ));
     }
 }

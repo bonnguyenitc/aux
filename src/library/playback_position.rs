@@ -1,8 +1,13 @@
-use anyhow::Result;
 use super::db::Database;
+use anyhow::Result;
 
 /// Save (upsert) the playback position for a video
-pub fn save_position(db: &Database, video_id: &str, position_secs: u64, duration_secs: u64) -> Result<()> {
+pub fn save_position(
+    db: &Database,
+    video_id: &str,
+    position_secs: u64,
+    duration_secs: u64,
+) -> Result<()> {
     let conn = db.connection();
     conn.execute(
         "INSERT INTO playback_positions (video_id, position_secs, duration_secs, updated_at)
@@ -66,9 +71,7 @@ pub fn clear_position(db: &Database, video_id: &str) -> Result<()> {
 /// Get all saved positions as a HashMap for display purposes
 pub fn get_all_positions(db: &Database) -> Result<std::collections::HashMap<String, u64>> {
     let conn = db.connection();
-    let mut stmt = conn.prepare(
-        "SELECT video_id, position_secs FROM playback_positions",
-    )?;
+    let mut stmt = conn.prepare("SELECT video_id, position_secs FROM playback_positions")?;
     let map = stmt
         .query_map([], |row| {
             let id: String = row.get(0)?;

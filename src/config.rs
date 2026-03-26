@@ -96,8 +96,7 @@ impl AiConfig {
         let (provider, model, api_key, api_key_env, base_url) = match profile_name {
             Some(name) => {
                 let profile = self.profiles.get(name).with_context(|| {
-                    let available: Vec<&str> =
-                        self.profiles.keys().map(|s| s.as_str()).collect();
+                    let available: Vec<&str> = self.profiles.keys().map(|s| s.as_str()).collect();
                     if available.is_empty() {
                         format!("Profile '{}' not found. No profiles configured.", name)
                     } else {
@@ -127,8 +126,7 @@ impl AiConfig {
 
         // Resolve API key: config value → env var → None
         let resolved_key = api_key.cloned().filter(|k| !k.is_empty()).or_else(|| {
-            api_key_env
-                .and_then(|var| std::env::var(var).ok().filter(|v| !v.is_empty()))
+            api_key_env.and_then(|var| std::env::var(var).ok().filter(|v| !v.is_empty()))
         });
 
         // Resolve base_url: explicit → provider default
@@ -250,8 +248,7 @@ impl Config {
             fs::create_dir_all(parent)?;
         }
 
-        let content =
-            toml::to_string_pretty(self).context("Failed to serialize config")?;
+        let content = toml::to_string_pretty(self).context("Failed to serialize config")?;
 
         fs::write(&path, content)
             .with_context(|| format!("Failed to write config: {}", path.display()))?;

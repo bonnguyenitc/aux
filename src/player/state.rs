@@ -69,8 +69,7 @@ impl StateFile {
     }
 
     pub fn read_from(path: &Path) -> Result<Self> {
-        let content =
-            std::fs::read_to_string(path).map_err(|_| AuxError::NoActiveSession)?;
+        let content = std::fs::read_to_string(path).map_err(|_| AuxError::NoActiveSession)?;
         serde_json::from_str(&content).context("Corrupt state file")
     }
 
