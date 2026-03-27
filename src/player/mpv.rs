@@ -4,6 +4,7 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::process::{Child, Command};
+use tokio::sync::Mutex;
 use tokio::time::sleep;
 
 use super::MediaPlayer;
@@ -15,6 +16,10 @@ pub struct MpvPlayer {
     process: Option<Child>,
     socket_path: PathBuf,
     playing: bool,
+    /// Cached IPC connection — reused across calls to avoid per-call socket
+    /// overhead (~50ms connect + teardown). Interior mutability via
+    /// tokio::sync::Mutex because the trait requires `&self` for query methods.
+    cached_conn: Mutex<Option<UnixStream>>,
 }
 
 impl MpvPlayer {
@@ -23,6 +28,7 @@ impl MpvPlayer {
             process: None,
             socket_path: PathBuf::from(SOCKET_PATH),
             playing: false,
+            cached_conn: Mutex::new(None),
         }
     }
 
@@ -36,6 +42,7 @@ impl MpvPlayer {
             process: None,
             socket_path,
             playing: true,
+            cached_conn: Mutex::new(None),
         })
     }
 
@@ -61,33 +68,46 @@ impl MpvPlayer {
         let _ = std::fs::remove_file(&self.socket_path);
     }
 
+    /// Try to use an existing connection, or create a new one.
+    async fn get_or_connect(&self) -> Result<UnixStream> {
+        let mut guard = self.cached_conn.lock().await;
+        if let Some(conn) = guard.take() {
+            return Ok(conn);
+        }
+        drop(guard);
+        let conn = tokio::time::timeout(
+            Duration::from_secs(2),
+            UnixStream::connect(&self.socket_path),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("mpv connection timeout"))?
+        .context("failed to connect to mpv socket")?;
+        Ok(conn)
+    }
+
+    /// Return a connection to the cache for reuse.
+    async fn return_conn(&self, conn: UnixStream) {
+        let mut guard = self.cached_conn.lock().await;
+        *guard = Some(conn);
+    }
+
     /// Send a JSON IPC command to mpv via Unix socket and return the response.
-    /// Retries up to 3 times with backoff on connection failure.
-    /// Times out after 2 seconds to prevent hangs.
+    /// Reuses a cached connection when possible. On I/O error, drops the
+    /// cached connection and retries with a fresh one (up to 2 attempts).
     async fn send_ipc_command(&self, command: &serde_json::Value) -> Result<String> {
         let mut cmd = serde_json::to_vec(command)?;
         cmd.push(b'\n');
 
         let mut last_err = None;
-        for attempt in 0..3u32 {
+        for attempt in 0..2u32 {
             if attempt > 0 {
-                sleep(Duration::from_millis(50 * (attempt as u64))).await;
+                sleep(Duration::from_millis(50)).await;
             }
 
-            let connect_result = tokio::time::timeout(
-                Duration::from_secs(2),
-                UnixStream::connect(&self.socket_path),
-            )
-            .await;
-
-            let mut stream = match connect_result {
-                Ok(Ok(s)) => s,
-                Ok(Err(e)) => {
-                    last_err = Some(e.into());
-                    continue;
-                }
-                Err(_) => {
-                    last_err = Some(anyhow::anyhow!("connection timeout"));
+            let mut stream = match self.get_or_connect().await {
+                Ok(s) => s,
+                Err(e) => {
+                    last_err = Some(e);
                     continue;
                 }
             };
@@ -100,7 +120,7 @@ impl MpvPlayer {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
                     last_err = Some(e.into());
-                    continue;
+                    continue; // drop stream, try fresh connection
                 }
                 Err(_) => {
                     last_err = Some(anyhow::anyhow!("write timeout"));
@@ -109,13 +129,27 @@ impl MpvPlayer {
             }
 
             // Read response with timeout
+            // We need to wrap in BufReader for read_line, but we want to
+            // recover the stream afterward for caching. BufReader::into_inner
+            // gives back the stream (any buffered data is lost, but mpv sends
+            // exactly one line per command so there's nothing to lose).
             let mut reader = BufReader::new(stream);
             let mut response = String::new();
             let read_result =
                 tokio::time::timeout(Duration::from_secs(2), reader.read_line(&mut response)).await;
 
             match read_result {
-                Ok(Ok(_)) => return Ok(response),
+                Ok(Ok(0)) => {
+                    // EOF — mpv closed the connection
+                    last_err = Some(anyhow::anyhow!("mpv closed connection"));
+                    continue;
+                }
+                Ok(Ok(_)) => {
+                    // Success — return the stream to cache for reuse
+                    let stream = reader.into_inner();
+                    self.return_conn(stream).await;
+                    return Ok(response);
+                }
                 Ok(Err(e)) => {
                     last_err = Some(e.into());
                     continue;
@@ -127,7 +161,7 @@ impl MpvPlayer {
             }
         }
 
-        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("mpv IPC failed after 3 attempts")))
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("mpv IPC failed after 2 attempts")))
     }
 
     async fn mpv_command(&self, args: &[&str]) -> Result<String> {
@@ -202,6 +236,8 @@ impl MediaPlayer for MpvPlayer {
     }
 
     async fn stop(&mut self) -> Result<()> {
+        // Drop cached connection before killing process
+        *self.cached_conn.get_mut() = None;
         if let Some(mut child) = self.process.take() {
             child.kill().await.ok();
         }
@@ -263,12 +299,15 @@ impl MediaPlayer for MpvPlayer {
             .await
             .map(|v| v.as_bool().unwrap_or(false))
             .unwrap_or(false);
+        if eof {
+            return Ok(true); // skip second IPC call
+        }
         let idle = self
             .get_property("idle-active")
             .await
             .map(|v| v.as_bool().unwrap_or(false))
             .unwrap_or(false);
-        Ok(eof || idle)
+        Ok(idle)
     }
 
     async fn load(&self, url: &str) -> Result<()> {

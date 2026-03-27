@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use super::types::RepeatMode;
@@ -57,9 +56,9 @@ impl StateFile {
     pub fn write_to(&self, path: &Path) -> Result<()> {
         let tmp = path.with_extension("tmp");
         let content = serde_json::to_string_pretty(self)?;
-        let mut file = std::fs::File::create(&tmp)?;
-        file.write_all(content.as_bytes())?;
-        file.sync_all()?;
+        // Skip fsync — this is an ephemeral /tmp state file.
+        // If the process crashes, losing it is acceptable.
+        std::fs::write(&tmp, content.as_bytes())?;
         std::fs::rename(&tmp, path)?;
         Ok(())
     }

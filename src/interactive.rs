@@ -24,6 +24,8 @@ pub enum InteractiveAction {
     PlayNext,
     /// Sleep timer expired
     SleepStop,
+    /// AI chat requested a search — carries the query string
+    SearchFromChat(String),
 }
 
 pub async fn run_interactive(

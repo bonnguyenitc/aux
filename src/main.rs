@@ -169,14 +169,11 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Chat {
-            message: _,
+            message,
             model: _,
-            profile: _,
+            profile,
         } => {
-            println!(
-                "  {}",
-                "Chat requires a video playing. Use: aux search → play → [c] to chat".dimmed()
-            );
+            cmd_chat_cli(&config, &db, message, profile.as_deref()).await?;
         }
         Commands::Suggest {
             model: _,
@@ -296,10 +293,17 @@ async fn play_video(
                     ai_context.current_position = pos;
                 }
 
-                run_chat_mode(&mut ai_context, config).await?;
-
-                // Restore player UI so user sees context after chat
-                print_player_ui(&current_video);
+                match run_chat_mode(&mut ai_context, config).await? {
+                    Some(InteractiveAction::SearchFromChat(query)) => {
+                        player.stop().await?;
+                        crossterm::terminal::disable_raw_mode().ok();
+                        break Some(query);
+                    }
+                    _ => {
+                        // Restore player UI so user sees context after chat
+                        print_player_ui(&current_video);
+                    }
+                }
             }
             InteractiveAction::SleepStop => {
                 // Clear sleep deadline
@@ -376,6 +380,8 @@ async fn play_video(
                     break None;
                 }
             }
+            // SearchFromChat is only returned from run_chat_mode, not run_interactive
+            InteractiveAction::SearchFromChat(_) => unreachable!(),
         }
     };
 
@@ -431,7 +437,12 @@ fn print_player_ui_inline(title: &str, channel: Option<&str>) {
 
 // ─── Chat ────────────────────────────────────────────────────
 
-async fn run_chat_mode(context: &mut VideoContext, config: &Config) -> Result<()> {
+/// TUI chat mode: returns `Some(InteractiveAction)` if an action needs to
+/// propagate back to the play loop (e.g. SearchFromChat), or `None` to resume.
+async fn run_chat_mode(
+    context: &mut VideoContext,
+    config: &Config,
+) -> Result<Option<InteractiveAction>> {
     println!(
         "\n  {} {} {}\n",
         "💬 Chat mode".bold().cyan(),
@@ -445,24 +456,22 @@ async fn run_chat_mode(context: &mut VideoContext, config: &Config) -> Result<()
             "⚠️  AI not configured. Run: aux config ai --setup".yellow()
         );
         println!();
-        return Ok(());
+        return Ok(None);
     }
 
     // Resolve AI config (default profile, no overrides)
     let resolved = config.ai.as_ref().unwrap().resolve(None)?;
 
     println!(
-        "  {} Esc to exit chat  /quit or /q to quit\n",
+        "  {} Esc to exit chat · /quit or /q to quit · try \"tăng volume\" or \"tìm bài lofi\"\n",
         "💡".dimmed()
     );
 
     loop {
-        // Read one line from the user with ESC support via crossterm raw mode.
-        // Returns None if the user pressed ESC, Some(String) otherwise.
         let input = read_chat_input()?;
 
         let input = match input {
-            None => break, // ESC → quit chat
+            None => break,
             Some(s) => s,
         };
         let input = input.trim().to_string();
@@ -484,9 +493,32 @@ async fn run_chat_mode(context: &mut VideoContext, config: &Config) -> Result<()
         spinner.enable_steady_tick(std::time::Duration::from_millis(80));
 
         match ai_chat(context, &input, &resolved).await {
-            Ok(response) => {
+            Ok(chat_response) => {
                 spinner.finish_and_clear();
-                println!("  {} {}\n", "🤖:".bold().cyan(), response);
+
+                // Handle actions if present
+                if chat_response.action.is_empty() {
+                    // Normal conversational reply
+                    println!("  {} {}\n", "🤖:".bold().cyan(), chat_response.message);
+                } else {
+                    println!("  {} {}\n", "🤖:".bold().cyan(), chat_response.message);
+                    for action in &chat_response.action {
+                        // Search is special — break out to the play loop
+                        if let ai::AiAction::Search { ref query } = action {
+                            println!("  {} Chat ended.\n", "👋".dimmed());
+                            return Ok(Some(InteractiveAction::SearchFromChat(
+                                query.clone(),
+                            )));
+                        }
+
+                        if let Err(e) = ai::execute_action(action).await {
+                            println!(
+                                "  {}",
+                                format!("(⚠️ action failed: {})", e).red()
+                            );
+                        }
+                    }
+                }
             }
             Err(e) => {
                 spinner.finish_and_clear();
@@ -501,7 +533,133 @@ async fn run_chat_mode(context: &mut VideoContext, config: &Config) -> Result<()
 
     println!("  {} Chat ended.\n", "👋".dimmed());
 
+    Ok(None)
+}
+
+/// CLI `aux chat` handler — single-shot or interactive loop.
+async fn cmd_chat_cli(
+    config: &Config,
+    db: &Database,
+    message: Vec<String>,
+    profile: Option<&str>,
+) -> Result<()> {
+    if config.ai.is_none() {
+        println!(
+            "  {}",
+            "⚠️  AI not configured. Run: aux config ai --setup".yellow()
+        );
+        return Ok(());
+    }
+
+    let resolved = config.ai.as_ref().unwrap().resolve(profile)?;
+
+    // Build a minimal VideoContext from StateFile (if a session is active)
+    let state = match crate::player::state::StateFile::read() {
+        Ok(s) => s,
+        Err(_) => {
+            println!(
+                "  {}",
+                "No active aux session. Start one with: aux play <url>".dimmed()
+            );
+            return Ok(());
+        }
+    };
+
+    let mut context = VideoContext::new(state.video, None);
+
+    if message.is_empty() {
+        // Interactive loop
+        println!(
+            "\n  {} {} {}\n",
+            "💬 Chat".bold().cyan(),
+            "(playing:".dimmed(),
+            format!("{})", context.video.title).dimmed()
+        );
+        println!(
+            "  {} type a message, /quit to exit · try \"tăng volume\" or \"tìm bài lofi\"\n",
+            "💡".dimmed()
+        );
+
+        loop {
+            let input = read_chat_input()?;
+            let input = match input {
+                None => break,
+                Some(s) => s,
+            };
+            let input = input.trim().to_string();
+            if input.is_empty() {
+                continue;
+            }
+            if input == "/quit" || input == "/q" || input == "exit" {
+                break;
+            }
+            process_chat_message(&mut context, &input, &resolved, config, db).await;
+        }
+        println!("  {} Chat ended.\n", "👋".dimmed());
+    } else {
+        // Single-shot
+        let msg = message.join(" ");
+        process_chat_message(&mut context, &msg, &resolved, config, db).await;
+    }
+
     Ok(())
+}
+
+/// Process a single chat message: call AI, execute action, print response.
+async fn process_chat_message(
+    context: &mut VideoContext,
+    input: &str,
+    resolved: &crate::config::ResolvedAiConfig,
+    config: &Config,
+    db: &Database,
+) {
+    let spinner = indicatif::ProgressBar::new_spinner();
+    spinner.set_style(
+        indicatif::ProgressStyle::with_template("  🤖:{spinner:.cyan} {msg}")
+            .unwrap()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+    );
+    spinner.set_message("Thinking...");
+    spinner.enable_steady_tick(std::time::Duration::from_millis(80));
+
+    match ai_chat(context, input, resolved).await {
+        Ok(chat_response) => {
+            spinner.finish_and_clear();
+
+            if chat_response.action.is_empty() {
+                println!("  {} {}\n", "🤖:".bold().cyan(), chat_response.message);
+            } else {
+                println!("  {} {}\n", "🤖:".bold().cyan(), chat_response.message);
+                for action in &chat_response.action {
+                    // Search from CLI: trigger cmd_search directly
+                    if let ai::AiAction::Search { ref query } = action {
+                        let source = config.media.default_source.clone();
+                        if let Err(e) =
+                            cmd_search(query, config.player.search_results, &source, config, db).await
+                        {
+                            println!("  {} {}\n", "❌".red(), e);
+                        }
+                        continue;
+                    }
+
+                    if let Err(e) = ai::execute_action(action).await {
+                        println!(
+                            "  {}",
+                            format!("(⚠️ {})", e).red()
+                        );
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            spinner.finish_and_clear();
+            println!(
+                "  {} {}\n",
+                "🤖:".bold().cyan(),
+                format!("Error: {}", e).red()
+            );
+        }
+    }
 }
 
 /// Read a line of input from the terminal using crossterm raw mode.
@@ -1315,6 +1473,18 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
         bool, // is_fav
         bool, // in_queue
     )> = None;
+    // Non-blocking AI chat: spawned task returns (context, result) so we can
+    // restore ai_context without Clone. While the task runs, ai_context is None.
+    let mut pending_chat: Option<
+        tokio::task::JoinHandle<(
+            ai::VideoContext,
+            anyhow::Result<ai::ChatResponse>,
+        )>,
+    > = None;
+    // Queued AI actions — when a pipeline like [Search, PlayResult] is returned,
+    // Search executes immediately and PlayResult is queued here to run after
+    // search results arrive.
+    let mut pending_ai_actions: Vec<ai::AiAction> = Vec::new();
 
     loop {
         // Draw
@@ -1332,10 +1502,505 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                 app.lyrics_scroll = 0;
                 app.lyrics_auto_scroll = true;
                 if let Some(video) = pending_transcript_video.take() {
-                    ai_context = Some(VideoContext::new(video, transcript));
-                    app.chat_messages.clear();
-                    app.chat_scroll = 0;
+                    let mut new_ctx = VideoContext::new(video, transcript);
+                    // Preserve chat history and search results from previous context
+                    if let Some(old_ctx) = ai_context.take() {
+                        new_ctx.chat_history = old_ctx.chat_history;
+                        new_ctx.search_results = old_ctx.search_results;
+                    }
+                    ai_context = Some(new_ctx);
+                    // Don't clear chat messages — keep conversation flowing
                 }
+            }
+        }
+
+        // AI chat completion (non-blocking)
+        if let Some(ref handle) = pending_chat {
+            if handle.is_finished() {
+                let handle = pending_chat.take().unwrap();
+                match handle.await {
+                    Ok((ctx, result)) => {
+                        ai_context = Some(ctx);
+                        match result {
+                            Ok(chat_response) => {
+                                let actions = chat_response.action;
+                                let mut action_err: Option<anyhow::Error> = None;
+                                let mut player_dead = false;
+
+                                // Debug: log detected actions
+                                if !actions.is_empty() {
+                                    let action_names: Vec<String> = actions.iter().map(|a| format!("{:?}", a)).collect();
+                                    app.set_status(format!("🤖 Actions: {}", action_names.join(" → ")));
+                                }
+
+                                // Process actions sequentially; queue remainder
+                                // after async-barrier actions like Search.
+                                let mut action_iter = actions.into_iter();
+                                while let Some(action) = action_iter.next() {
+                                    match action {
+                                        ai::AiAction::Search { ref query } => {
+                                            let q = query.clone();
+                                            app.search_input = query.clone();
+                                            app.set_status(format!("🔍 AI searching: {}", query));
+                                            let fetch_count = app.search_page_size * 5;
+                                            let source = app.search_source.clone();
+                                            pending_search = Some((
+                                                tokio::spawn(async move {
+                                                    let yt = YtDlp::new();
+                                                    use crate::media::MediaBackend;
+                                                    yt.search(&q, fetch_count, &source).await
+                                                }),
+                                                query.clone(),
+                                            ));
+                                            // Queue remaining actions for after search completes
+                                            pending_ai_actions = action_iter.collect();
+                                            break;
+                                        }
+                                        ai::AiAction::PlayResult { index } => {
+                                            // Pick from current search results (1-based → 0-based)
+                                            if index == 0 || index > app.search_results.len() {
+                                                action_err = Some(anyhow::anyhow!(
+                                                    "Invalid result index {} (have {} results)",
+                                                    index,
+                                                    app.search_results.len()
+                                                ));
+                                            } else {
+                                                let video = app.search_results[index - 1].clone();
+                                                let url = video.url.clone();
+                                                let is_fav = library::favorites::is_favorite(db, &video.id).unwrap_or(false);
+                                                let in_queue = app.queue_items.iter().any(|q| q.video_id == video.id);
+                                                app.set_status(format!("▶ Playing: {}", video.title));
+                                                pending_stream = Some((
+                                                    tokio::spawn(async move {
+                                                        let yt = YtDlp::new();
+                                                        use crate::media::MediaBackend;
+                                                        yt.get_stream_url(&url).await
+                                                    }),
+                                                    video,
+                                                    is_fav,
+                                                    in_queue,
+                                                ));
+                                            }
+                                        }
+                                        ai::AiAction::PlayRandom => {
+                                            if app.search_results.is_empty() {
+                                                action_err = Some(anyhow::anyhow!(
+                                                    "No search results to pick from"
+                                                ));
+                                            } else {
+                                                use std::collections::hash_map::DefaultHasher;
+                                                use std::hash::{Hash, Hasher};
+                                                let mut hasher = DefaultHasher::new();
+                                                std::time::SystemTime::now().hash(&mut hasher);
+                                                let idx = (hasher.finish() as usize) % app.search_results.len();
+                                                let video = app.search_results[idx].clone();
+                                                let url = video.url.clone();
+                                                let is_fav = library::favorites::is_favorite(db, &video.id).unwrap_or(false);
+                                                let in_queue = app.queue_items.iter().any(|q| q.video_id == video.id);
+                                                app.set_status(format!("🎲 Random: {}", video.title));
+                                                pending_stream = Some((
+                                                    tokio::spawn(async move {
+                                                        let yt = YtDlp::new();
+                                                        use crate::media::MediaBackend;
+                                                        yt.get_stream_url(&url).await
+                                                    }),
+                                                    video,
+                                                    is_fav,
+                                                    in_queue,
+                                                ));
+                                            }
+                                        }
+                                        ai::AiAction::AddFavorite => {
+                                            if let Some(ref np) = app.now_playing {
+                                                match library::favorites::add_favorite(db, &np.video) {
+                                                    Ok(_) => {
+                                                        app.fav_items = library::favorites::get_favorites(db).unwrap_or_default();
+                                                        app.set_status(format!("❤️ Added: {}", np.video.title));
+                                                    }
+                                                    Err(e) => action_err = Some(e),
+                                                }
+                                            } else {
+                                                action_err = Some(anyhow::anyhow!("No track playing"));
+                                            }
+                                        }
+                                        ai::AiAction::RemoveFavorite => {
+                                            if let Some(ref np) = app.now_playing {
+                                                match library::favorites::remove_favorite(db, &np.video.id) {
+                                                    Ok(_) => {
+                                                        app.fav_items = library::favorites::get_favorites(db).unwrap_or_default();
+                                                        app.set_status(format!("💔 Removed: {}", np.video.title));
+                                                    }
+                                                    Err(e) => action_err = Some(e),
+                                                }
+                                            } else {
+                                                action_err = Some(anyhow::anyhow!("No track playing"));
+                                            }
+                                        }
+                                        ai::AiAction::AddToQueue => {
+                                            if let Some(ref np) = app.now_playing {
+                                                match library::queue::add_to_queue(db, &np.video) {
+                                                    Ok(added) => {
+                                                        app.queue_items = library::queue::get_queue(db).unwrap_or_default();
+                                                        if added {
+                                                            app.set_status(format!("📋 Queued: {}", np.video.title));
+                                                        } else {
+                                                            app.set_status("Already in queue");
+                                                        }
+                                                    }
+                                                    Err(e) => action_err = Some(e),
+                                                }
+                                            } else {
+                                                action_err = Some(anyhow::anyhow!("No track playing"));
+                                            }
+                                        }
+                                        ai::AiAction::ClearQueue => {
+                                            match library::queue::clear_queue(db) {
+                                                Ok(count) => {
+                                                    app.queue_items = Vec::new();
+                                                    app.set_status(format!("🗑 Cleared {} items from queue", count));
+                                                }
+                                                Err(e) => action_err = Some(e),
+                                            }
+                                        }
+                                        ai::AiAction::ShowPanel { ref panel } => {
+                                            let target = match panel.as_str() {
+                                                "queue" => Some(Panel::Queue),
+                                                "favorites" | "favourite" | "fav" => Some(Panel::Favorites),
+                                                "history" => Some(Panel::History),
+                                                "lyrics" => Some(Panel::Lyrics),
+                                                "search" | "results" => Some(Panel::Results),
+                                                "chat" => Some(Panel::Chat),
+                                                "playlists" | "playlist" => Some(Panel::Playlists),
+                                                _ => None,
+                                            };
+                                            if let Some(p) = target {
+                                                app.set_panel(p);
+                                            } else {
+                                                action_err = Some(anyhow::anyhow!("Unknown panel: {}", panel));
+                                            }
+                                        }
+                                        ai::AiAction::CreatePlaylist { ref name } => {
+                                            match library::playlist::create_playlist(db, name) {
+                                                Ok(_) => {
+                                                    app.playlist_list = library::playlist::list_playlists(db).unwrap_or_default();
+                                                    app.set_status(format!("🎶 Created playlist: {}", name));
+                                                }
+                                                Err(e) => action_err = Some(e),
+                                            }
+                                        }
+                                        ai::AiAction::DeletePlaylist { ref name } => {
+                                            match library::playlist::delete_playlist(db, name) {
+                                                Ok(true) => {
+                                                    app.playlist_list = library::playlist::list_playlists(db).unwrap_or_default();
+                                                    app.set_status(format!("🗑 Deleted playlist: {}", name));
+                                                }
+                                                Ok(false) => {
+                                                    action_err = Some(anyhow::anyhow!("Playlist '{}' not found", name));
+                                                }
+                                                Err(e) => action_err = Some(e),
+                                            }
+                                        }
+                                        ai::AiAction::AddToPlaylist { ref playlist } => {
+                                            if let Some(ref np) = app.now_playing {
+                                                match library::playlist::add_to_playlist(db, playlist, &np.video) {
+                                                    Ok(true) => {
+                                                        app.set_status(format!("➕ Added to {}: {}", playlist, np.video.title));
+                                                    }
+                                                    Ok(false) => {
+                                                        app.set_status(format!("Already in playlist {}", playlist));
+                                                    }
+                                                    Err(e) => action_err = Some(e),
+                                                }
+                                            } else {
+                                                action_err = Some(anyhow::anyhow!("No track playing to add"));
+                                            }
+                                        }
+                                        ai::AiAction::PlayPlaylist { ref name } => {
+                                            match library::playlist::load_playlist_to_queue(db, name) {
+                                                Ok(count) if count > 0 => {
+                                                    app.queue_items = library::queue::get_queue(db).unwrap_or_default();
+                                                    // Pop first item and start playing
+                                                    if let Some(entry) = library::queue::pop_next(db).unwrap_or(None) {
+                                                        app.queue_items = library::queue::get_queue(db).unwrap_or_default();
+                                                        let video = crate::media::MediaInfo {
+                                                            id: entry.video_id.clone(),
+                                                            title: entry.title.clone(),
+                                                            channel: entry.channel.clone(),
+                                                            url: entry.url.clone(),
+                                                            duration: entry.duration_secs.map(|d| d as f64),
+                                                            view_count: None,
+                                                            thumbnail: None,
+                                                            description: None,
+                                                            source: crate::media::Source::default(),
+                                                            extractor_key: None,
+                                                        };
+                                                        let url = entry.url.clone();
+                                                        let is_fav = library::favorites::is_favorite(db, &entry.video_id).unwrap_or(false);
+                                                        app.set_status(format!("🎵 Playing playlist {}: {}", name, entry.title));
+                                                        pending_stream = Some((
+                                                            tokio::spawn(async move {
+                                                                let yt = YtDlp::new();
+                                                                use crate::media::MediaBackend;
+                                                                yt.get_stream_url(&url).await
+                                                            }),
+                                                            video,
+                                                            is_fav,
+                                                            false,
+                                                        ));
+                                                    }
+                                                }
+                                                Ok(_) => {
+                                                    action_err = Some(anyhow::anyhow!("Playlist '{}' is empty", name));
+                                                }
+                                                Err(e) => action_err = Some(e),
+                                            }
+                                        }
+                                        // All other actions — execute inline
+                                        ref other => {
+                                            if let Some(ref p) = player {
+                                                let r = match other {
+                                                    ai::AiAction::SetVolume { value } => {
+                                                        let r = p.set_volume(*value).await;
+                                                        if r.is_ok() {
+                                                            if let Some(ref mut np) = app.now_playing {
+                                                                np.volume = *value;
+                                                            }
+                                                        }
+                                                        r
+                                                    }
+                                                    ai::AiAction::Mute => {
+                                                        let r = p.set_volume(0).await;
+                                                        if r.is_ok() {
+                                                            if let Some(ref mut np) = app.now_playing {
+                                                                np.volume = 0;
+                                                            }
+                                                        }
+                                                        r
+                                                    }
+                                                    ai::AiAction::Pause => {
+                                                        let r = p.pause().await;
+                                                        if r.is_ok() {
+                                                            if let Some(ref mut np) = app.now_playing {
+                                                                np.paused = true;
+                                                            }
+                                                        }
+                                                        r
+                                                    }
+                                                    ai::AiAction::Resume => {
+                                                        let r = p.resume().await;
+                                                        if r.is_ok() {
+                                                            if let Some(ref mut np) = app.now_playing {
+                                                                np.paused = false;
+                                                            }
+                                                        }
+                                                        r
+                                                    }
+                                                    ai::AiAction::Seek { seconds } => {
+                                                        p.seek(*seconds).await
+                                                    }
+                                                    ai::AiAction::Next => {
+                                                        // Try to play next in search results first
+                                                        let played = if !app.search_results.is_empty() {
+                                                            if let Some(ref np) = app.now_playing {
+                                                                let cur_idx = app.search_results.iter().position(|v| v.id == np.video.id);
+                                                                if let Some(idx) = cur_idx {
+                                                                    let next_idx = idx + 1;
+                                                                    if next_idx < app.search_results.len() {
+                                                                        let video = app.search_results[next_idx].clone();
+                                                                        let url = video.url.clone();
+                                                                        let is_fav = library::favorites::is_favorite(db, &video.id).unwrap_or(false);
+                                                                        let in_queue = app.queue_items.iter().any(|q| q.video_id == video.id);
+                                                                        app.set_status(format!("⏭ Next: {}", video.title));
+                                                                        pending_stream = Some((
+                                                                            tokio::spawn(async move {
+                                                                                let yt = YtDlp::new();
+                                                                                use crate::media::MediaBackend;
+                                                                                yt.get_stream_url(&url).await
+                                                                            }),
+                                                                            video,
+                                                                            is_fav,
+                                                                            in_queue,
+                                                                        ));
+                                                                        true
+                                                                    } else { false }
+                                                                } else { false }
+                                                            } else { false }
+                                                        } else { false };
+                                                        if played { Ok(()) } else {
+                                                            // Fall back to queue-based skip
+                                                            p.seek_to(999999.0).await
+                                                        }
+                                                    }
+                                                    ai::AiAction::Prev => {
+                                                        // Try to play prev in search results first
+                                                        let played = if !app.search_results.is_empty() {
+                                                            if let Some(ref np) = app.now_playing {
+                                                                let cur_idx = app.search_results.iter().position(|v| v.id == np.video.id);
+                                                                if let Some(idx) = cur_idx {
+                                                                    if idx > 0 {
+                                                                        let video = app.search_results[idx - 1].clone();
+                                                                        let url = video.url.clone();
+                                                                        let is_fav = library::favorites::is_favorite(db, &video.id).unwrap_or(false);
+                                                                        let in_queue = app.queue_items.iter().any(|q| q.video_id == video.id);
+                                                                        app.set_status(format!("⏮ Prev: {}", video.title));
+                                                                        pending_stream = Some((
+                                                                            tokio::spawn(async move {
+                                                                                let yt = YtDlp::new();
+                                                                                use crate::media::MediaBackend;
+                                                                                yt.get_stream_url(&url).await
+                                                                            }),
+                                                                            video,
+                                                                            is_fav,
+                                                                            in_queue,
+                                                                        ));
+                                                                        true
+                                                                    } else { false }
+                                                                } else { false }
+                                                            } else { false }
+                                                        } else { false };
+                                                        if played { Ok(()) } else {
+                                                            // Fall back to restart current track
+                                                            p.seek_to(0.0).await
+                                                        }
+                                                    }
+                                                    ai::AiAction::SetSpeed { value } => {
+                                                        let speed = value.clamp(0.25, 4.0);
+                                                        let r = p.set_speed(speed).await;
+                                                        if r.is_ok() {
+                                                            if let Some(ref mut np) = app.now_playing {
+                                                                np.speed = speed;
+                                                            }
+                                                            if let Ok(mut state) = crate::player::state::StateFile::read() {
+                                                                state.speed = speed;
+                                                                state.write().ok();
+                                                            }
+                                                        }
+                                                        r
+                                                    }
+                                                    ai::AiAction::SetRepeat { mode } => {
+                                                        let repeat = match mode.as_str() {
+                                                            "one" => crate::player::RepeatMode::One,
+                                                            "all" => crate::player::RepeatMode::All,
+                                                            _ => crate::player::RepeatMode::Off,
+                                                        };
+                                                        p.set_loop_file(repeat == crate::player::RepeatMode::One)
+                                                            .await
+                                                            .ok();
+                                                        if let Ok(mut state) = crate::player::state::StateFile::read() {
+                                                            state.repeat = repeat;
+                                                            state.write().ok();
+                                                        }
+                                                        Ok(())
+                                                    }
+                                                    ai::AiAction::ToggleShuffle => {
+                                                        if let Ok(mut state) = crate::player::state::StateFile::read() {
+                                                            state.shuffle = !state.shuffle;
+                                                            state.write().ok();
+                                                        }
+                                                        Ok(())
+                                                    }
+                                                    ai::AiAction::SetSleep { minutes } => {
+                                                        let deadline = chrono::Utc::now()
+                                                            + chrono::Duration::minutes(i64::from(*minutes));
+                                                        if let Ok(mut state) = crate::player::state::StateFile::read() {
+                                                            state.sleep_deadline = Some(deadline);
+                                                            state.write().ok();
+                                                        }
+                                                        Ok(())
+                                                    }
+                                                    ai::AiAction::CancelSleep => {
+                                                        if let Ok(mut state) = crate::player::state::StateFile::read() {
+                                                            state.sleep_deadline = None;
+                                                            state.write().ok();
+                                                        }
+                                                        Ok(())
+                                                    }
+                                                    _ => unreachable!(),
+                                                };
+                                                if let Err(e) = r {
+                                                    let err_msg = format!("{}", e);
+                                                    // Detect dead mpv socket
+                                                    if err_msg.contains("connect")
+                                                        || err_msg.contains("socket")
+                                                        || err_msg.contains("broken pipe")
+                                                        || err_msg.contains("Io(")
+                                                    {
+                                                        player_dead = true;
+                                                        action_err = Some(anyhow::anyhow!(
+                                                            "Player disconnected. Search and play a new track."
+                                                        ));
+                                                    } else {
+                                                        action_err = Some(e);
+                                                    }
+                                                }
+                                            } else {
+                                                // No player — only state-file actions work
+                                                match other {
+                                                    ai::AiAction::SetSleep { minutes } => {
+                                                        let deadline = chrono::Utc::now()
+                                                            + chrono::Duration::minutes(i64::from(*minutes));
+                                                        if let Ok(mut state) = crate::player::state::StateFile::read() {
+                                                            state.sleep_deadline = Some(deadline);
+                                                            state.write().ok();
+                                                        }
+                                                    }
+                                                    ai::AiAction::CancelSleep => {
+                                                        if let Ok(mut state) = crate::player::state::StateFile::read() {
+                                                            state.sleep_deadline = None;
+                                                            state.write().ok();
+                                                        }
+                                                    }
+                                                    _ => {
+                                                        action_err = Some(anyhow::anyhow!("No track playing"));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Clean up stale player if socket died
+                                if player_dead {
+                                    if let Some(mut p) = player.take() {
+                                        p.stop().await.ok();
+                                    }
+                                    app.now_playing = None;
+                                    crate::player::state::StateFile::remove().ok();
+                                }
+
+                                match action_err {
+                                    Some(e) => {
+                                        app.push_chat_message(
+                                            "assistant",
+                                            &format!("{} (⚠️ {})", chat_response.message, e),
+                                        );
+                                    }
+                                    None => {
+                                        app.push_chat_message(
+                                            "assistant",
+                                            &chat_response.message,
+                                        );
+                                    }
+                                }
+                                app.set_status("Reply received");
+                            }
+                            Err(e) => {
+                                app.push_chat_message(
+                                    "assistant",
+                                    &format!("Error: {}", e),
+                                );
+                                app.set_status(format!("Chat error: {}", e));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        app.push_chat_message(
+                            "assistant",
+                            &format!("Chat task failed: {}", e),
+                        );
+                    }
+                }
+                app.chat_loading = false;
             }
         }
 
@@ -1356,9 +2021,88 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                             total,
                             app.search_total_pages()
                         ));
+
+                        // Sync search results to AI context for future reference
+                        if let Some(ref mut ctx) = ai_context {
+                            ctx.search_results = app
+                                .search_results
+                                .iter()
+                                .map(|v| format!("{}", v))
+                                .collect();
+                        }
+
+                        // Drain queued AI actions (e.g. PlayResult after Search)
+                        if !pending_ai_actions.is_empty() {
+                            let queued = std::mem::take(&mut pending_ai_actions);
+                            for action in queued {
+                                match action {
+                                    ai::AiAction::PlayResult { index } => {
+                                        if index == 0 || index > app.search_results.len() {
+                                            app.push_chat_message(
+                                                "assistant",
+                                                &format!(
+                                                    "⚠️ Couldn't auto-play: index {} out of range (have {} results)",
+                                                    index,
+                                                    app.search_results.len()
+                                                ),
+                                            );
+                                        } else {
+                                            let video = app.search_results[index - 1].clone();
+                                            let url = video.url.clone();
+                                            let is_fav = library::favorites::is_favorite(db, &video.id).unwrap_or(false);
+                                            let in_queue = app.queue_items.iter().any(|q| q.video_id == video.id);
+                                            app.set_status(format!("▶ Playing: {}", video.title));
+                                            pending_stream = Some((
+                                                tokio::spawn(async move {
+                                                    let yt = YtDlp::new();
+                                                    use crate::media::MediaBackend;
+                                                    yt.get_stream_url(&url).await
+                                                }),
+                                                video,
+                                                is_fav,
+                                                in_queue,
+                                            ));
+                                        }
+                                    }
+                                    ai::AiAction::PlayRandom => {
+                                        if !app.search_results.is_empty() {
+                                            use std::collections::hash_map::DefaultHasher;
+                                            use std::hash::{Hash, Hasher};
+                                            let mut hasher = DefaultHasher::new();
+                                            std::time::SystemTime::now().hash(&mut hasher);
+                                            let idx = (hasher.finish() as usize) % app.search_results.len();
+                                            let video = app.search_results[idx].clone();
+                                            let url = video.url.clone();
+                                            let is_fav = library::favorites::is_favorite(db, &video.id).unwrap_or(false);
+                                            let in_queue = app.queue_items.iter().any(|q| q.video_id == video.id);
+                                            app.set_status(format!("🎲 Random: {}", video.title));
+                                            pending_stream = Some((
+                                                tokio::spawn(async move {
+                                                    let yt = YtDlp::new();
+                                                    use crate::media::MediaBackend;
+                                                    yt.get_stream_url(&url).await
+                                                }),
+                                                video,
+                                                is_fav,
+                                                in_queue,
+                                            ));
+                                        }
+                                    }
+                                    _ => {
+                                        // Other queued actions after search are unusual but safe to skip
+                                    }
+                                }
+                            }
+                        }
                     }
-                    Ok(Err(e)) => app.set_status(format!("Search failed: {}", e)),
-                    Err(e) => app.set_status(format!("Search failed: {}", e)),
+                    Ok(Err(e)) => {
+                        pending_ai_actions.clear();
+                        app.set_status(format!("Search failed: {}", e));
+                    }
+                    Err(e) => {
+                        pending_ai_actions.clear();
+                        app.set_status(format!("Search failed: {}", e));
+                    }
                 }
             }
         }
@@ -1429,20 +2173,28 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                     .as_ref()
                     .map(|np| np.paused)
                     .unwrap_or(false);
-                // When paused, skip position/duration queries — they don't change
-                let (pos, dur) = if is_paused {
+
+                // When paused (and no pending resume seek), skip ALL mpv IPC
+                // queries — nothing changes while paused and each IPC call adds
+                // ~50-100ms of socket overhead, causing noticeable typing lag in
+                // the Chat panel. Use fully cached values instead.
+                // A lightweight get_paused() check on the slower 2s cadence
+                // (state read below) detects if something externally unpaused.
+                let (pos, dur, vol, paused) = if is_paused && app.pending_resume_seek.is_none() {
                     let np = app.now_playing.as_ref();
                     (
                         np.map(|n| n.position_secs).unwrap_or(0),
                         np.map(|n| n.duration_secs).unwrap_or(0),
+                        np.map(|n| n.volume).unwrap_or(80),
+                        true, // known paused
                     )
                 } else {
                     let p_val = p.get_position().await.map(|d| d.as_secs()).unwrap_or(0);
                     let d_val = p.get_duration().await.map(|d| d.as_secs()).unwrap_or(0);
-                    (p_val, d_val)
+                    let v_val = p.get_volume().await.unwrap_or(80);
+                    let pa_val = p.get_paused().await.unwrap_or(is_paused);
+                    (p_val, d_val, v_val, pa_val)
                 };
-                let vol = p.get_volume().await.unwrap_or(80);
-                let paused = p.get_paused().await.unwrap_or(is_paused);
                 app.update_playback(pos, dur, paused, vol);
 
                 // Deferred resume seek: apply once mpv has loaded (dur > 0)
@@ -1508,6 +2260,19 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 state.write().ok();
                                 app.set_status("😴 Sleep timer — playback stopped. Goodnight! 🌙");
                                 continue;
+                            }
+                        }
+                    }
+
+                    // When we skipped IPC polling above (paused → full cache),
+                    // do a single cheap get_paused() call here (~2s cadence) to
+                    // detect external unpause (e.g. AI chat "resume" or remote).
+                    if is_paused {
+                        if let Ok(actual_paused) = p.get_paused().await {
+                            if !actual_paused {
+                                if let Some(ref mut np) = app.now_playing {
+                                    np.paused = false;
+                                }
                             }
                         }
                     }
@@ -2511,34 +3276,19 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 app.chat_input.clear();
                                 app.push_chat_message("user", &input);
 
-                                if let Some(ref mut ctx) = ai_context {
+                                if ai_context.is_some() {
                                     if let Some(ref ai_cfg) = config.ai {
                                         match ai_cfg.resolve(None) {
                                             Ok(resolved) => {
                                                 app.chat_loading = true;
                                                 app.set_status("AI is thinking...");
-                                                terminal.draw(|f| ui::draw(f, &app))?;
-
-                                                match ai_chat(ctx, &input, &resolved).await {
-                                                    Ok(response) => {
-                                                        app.push_chat_message(
-                                                            "assistant",
-                                                            &response,
-                                                        );
-                                                        app.set_status("Reply received");
-                                                    }
-                                                    Err(e) => {
-                                                        app.push_chat_message(
-                                                            "assistant",
-                                                            &format!("Error: {}", e),
-                                                        );
-                                                        app.set_status(format!(
-                                                            "Chat error: {}",
-                                                            e
-                                                        ));
-                                                    }
-                                                }
-                                                app.chat_loading = false;
+                                                // Move context into spawned task;
+                                                // it will be returned on completion.
+                                                let mut ctx = ai_context.take().unwrap();
+                                                pending_chat = Some(tokio::spawn(async move {
+                                                    let result = ai_chat(&mut ctx, &input, &resolved).await;
+                                                    (ctx, result)
+                                                }));
                                             }
                                             Err(e) => {
                                                 app.push_chat_message(
@@ -2553,11 +3303,61 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                             "AI not configured. Run: aux config ai --setup",
                                         );
                                     }
-                                } else {
+                                } else if pending_chat.is_some() {
                                     app.push_chat_message(
                                         "assistant",
-                                        "Play a track first to chat about it!",
+                                        "Still thinking about the previous message...",
                                     );
+                                } else {
+                                    // No video playing — create a lightweight context
+                                    // so the user can still search, pick results, and chat.
+                                    let placeholder = crate::media::MediaInfo {
+                                        id: String::new(),
+                                        title: "(no track playing)".to_string(),
+                                        channel: None,
+                                        url: String::new(),
+                                        duration: None,
+                                        view_count: None,
+                                        thumbnail: None,
+                                        description: None,
+                                        source: crate::media::Source::default(),
+                                        extractor_key: None,
+                                    };
+                                    let mut ctx = VideoContext::new(placeholder, None);
+                                    // Carry over search results if any
+                                    ctx.search_results = app
+                                        .search_results
+                                        .iter()
+                                        .map(|v| format!("{}", v))
+                                        .collect();
+                                    ai_context = Some(ctx);
+                                    // Now retry — ai_context is Some, will enter the branch above
+                                    let mut ctx = ai_context.take().unwrap();
+                                    if let Some(ref ai_cfg) = config.ai {
+                                        match ai_cfg.resolve(None) {
+                                            Ok(resolved) => {
+                                                app.chat_loading = true;
+                                                app.set_status("AI is thinking...");
+                                                pending_chat = Some(tokio::spawn(async move {
+                                                    let result = ai_chat(&mut ctx, &input, &resolved).await;
+                                                    (ctx, result)
+                                                }));
+                                            }
+                                            Err(e) => {
+                                                ai_context = Some(ctx);
+                                                app.push_chat_message(
+                                                    "assistant",
+                                                    &format!("Config error: {}", e),
+                                                );
+                                            }
+                                        }
+                                    } else {
+                                        ai_context = Some(ctx);
+                                        app.push_chat_message(
+                                            "assistant",
+                                            "AI not configured. Run: aux config ai --setup",
+                                        );
+                                    }
                                 }
                             }
                             handled = true;
@@ -2602,15 +3402,27 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                 // (skip if the panel already consumed this key, e.g. typing in Search)
                 if !handled && player.is_some() {
                     match (code, modifiers) {
-                        // Pause / resume
+                        // Pause / resume (restart if track has ended)
                         (KeyCode::Char(' '), _) => {
                             if let Some(ref p) = player {
-                                p.toggle_pause().await.ok();
-                                // Read actual state from mpv to stay in sync
-                                if let Some(ref mut np) = app.now_playing {
-                                    match p.get_paused().await {
-                                        Ok(paused) => np.paused = paused,
-                                        Err(_) => np.paused = !np.paused, // fallback
+                                // If the track has finished, restart from the beginning
+                                let finished = p.is_finished().await.unwrap_or(false);
+                                if finished {
+                                    p.seek_to(0.0).await.ok();
+                                    p.resume().await.ok();
+                                    if let Some(ref mut np) = app.now_playing {
+                                        np.paused = false;
+                                        np.position_secs = 0;
+                                    }
+                                    app.set_status("▶ Restarted");
+                                } else {
+                                    p.toggle_pause().await.ok();
+                                    // Read actual state from mpv to stay in sync
+                                    if let Some(ref mut np) = app.now_playing {
+                                        match p.get_paused().await {
+                                            Ok(paused) => np.paused = paused,
+                                            Err(_) => np.paused = !np.paused, // fallback
+                                        }
                                     }
                                 }
                             }
