@@ -1,10 +1,14 @@
 # aux 🎵
 
-> **Listen to music with your AI agent — in the terminal.**
+[![GitHub stars](https://img.shields.io/github/stars/bonnguyenitc/duet?style=social)](https://github.com/bonnguyenitc/duet)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Built with Rust](https://img.shields.io/badge/Built%20with-Rust-dea584.svg)](https://www.rust-lang.org/)
 
-Stop alt-tabbing to Spotify. Stop feeding Chrome 2GB of RAM for a YouTube tab. Stop losing your flow to ads and recommendations rabbit holes.
+> **Your terminal music player — with an AI that actually listens.**
 
-aux is an open-source terminal music player that pairs you with an AI companion. Search YouTube, SoundCloud, YT Music & [1000+ sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) — no browser, no ads, no distractions. Get synced lyrics, chat about what you're hearing, and let AI suggest your next track. Built in Rust. Zero subscriptions.
+No browser tabs. No ads. No 2GB RAM drain. Just music and an AI companion that understands what you're hearing.
+
+Search YouTube, SoundCloud, YT Music & [1000+ sources](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md). Get synced lyrics. Chat about any song. Let AI control the player for you — all from the terminal. Built in Rust. Free forever.
 
 ![aux demo](demo/demo-aux.gif)
 
@@ -15,42 +19,66 @@ brew install yt-dlp mpv        # dependencies
 cargo install --path .         # install aux
 ```
 
-## 🔥 Why developers love aux
+## 🔥 Why devs switch to aux
 
-- 🤖 **AI listens with you** — ask "what's this song about?", get podcast summaries, receive smart recommendations
-- 🎧 **1000+ sources** — YouTube, SoundCloud, YT Music, Bandcamp, and more — no browser, no ads
-- 📝 **Auto-synced lyrics** — karaoke mode in your terminal
-- 🎛️ **Full player** — queue, playlists, EQ, shuffle, repeat, sleep timer
+- 🤖 **Talk to your player** — "play something chill", "skip to the chorus", "add to favorites" — your AI handles it
+- 🎧 **1000+ sources, zero ads** — YouTube, SoundCloud, Bandcamp, and more — no account needed
+- 📝 **Auto-synced lyrics** — karaoke mode, right in the terminal
+- 🎛️ **Full-featured** — queue, playlists, favorites, EQ, shuffle, repeat, sleep timer
 - ⌨️ **Keyboard-only** — never leave your workflow
 
 ## 🎬 Quick start
 
 ```bash
 aux                                  # launch TUI (9 panels, full control)
-aux search "lofi coding music"       # search & play from CLI
-aux play <url>                       # play any URL
+aux search "lofi coding music"       # search & pick from CLI
+aux play <url>                       # play any URL directly
 ```
 
-**TUI panels:** Search → Results → Lyrics → Queue → Favorites → History → Playlists → Chat → Help
+Press `Tab` to switch panels, `?` for all keybindings.
 
-Press `Tab` to switch panels, `?` for help.
+## 🤖 AI-powered — just chat
 
-## 🤖 Your AI music companion
+aux isn't just a player. It's a **listening partner** that understands context, executes commands, and chains actions — all through natural language.
 
-aux isn't just a player — it's a **listening partner**. Transcripts are fetched automatically so AI understands what you're hearing.
+### Talk, don't type commands
 
-```bash
-aux chat "summarize this podcast"     # get the gist without rewinding
-aux chat "what are the lyrics about?" # understand any song
-aux chat "recommend something chill"  # conversational discovery
-aux suggest                           # AI picks your next track
-aux chat                              # open-ended conversation
+Open the Chat panel (`c`) and type what you want:
+
+```
+"play a random song by Ed Sheeran"        → searches + plays random result
+"add this to my Chill playlist"            → adds current track
+"next track"                               → skips to next
+"pause"                                    → pauses
+"what is this song about?"                 → explains the song
 ```
 
-**Works with your favorite LLM** — OpenAI, Anthropic, Gemini, or local Ollama:
+### What AI can do
+
+| Category | Examples |
+|----------|----------|
+| **Search & Play** | Search, play by name, pick from results, play random |
+| **Playback** | Pause, resume, seek, volume, speed, repeat, shuffle, sleep timer |
+| **Library** | Add/remove favorites, add to queue, clear queue |
+| **Playlists** | Create, delete, add tracks, play entire playlist |
+| **Navigation** | Switch to any panel (queue, favorites, history, lyrics...) |
+| **Compose** | Chain actions: *"search lofi and play the 3rd result"* |
+
+### CLI chat
 
 ```bash
-aux config ai --setup                 # 30-second guided wizard
+aux chat "summarize this podcast"     # quick one-shot
+aux chat "recommend something chill"  # AI picks your next track
+aux chat                              # open interactive chat
+aux suggest                           # AI suggests related tracks
+```
+
+### Setup (30 seconds)
+
+Works with **OpenAI**, **Anthropic**, **Google Gemini**, or local **Ollama**:
+
+```bash
+aux config ai --setup                 # guided wizard
 ```
 
 ## ⌨️ Keybindings
@@ -63,8 +91,9 @@ aux config ai --setup                 # 30-second guided wizard
 | `]` `[` | Speed up / down | | `r` | Cycle repeat |
 | `/` | New search | | `z` | Toggle shuffle 🔀 |
 | `e` | Cycle EQ preset 🎛️ | | `t` | Sleep timer 😴 |
+| `c` | Open chat 💬 | | `?` | Help |
 
-## 🎵 CLI commands
+## 🎵 CLI reference
 
 <details>
 <summary><b>Playback</b></summary>
@@ -128,7 +157,7 @@ aux config player                    # show player settings
 aux config player set --volume 80    # default volume
 aux config ai --setup                # AI setup wizard
 
-# AI profiles
+# Multiple AI profiles
 aux config ai add-profile deep \
   --provider anthropic \
   --model claude-sonnet-4-6 \
@@ -144,21 +173,22 @@ Config file: `~/.config/aux/config.toml`
 
 </details>
 
-## 🏆 aux vs Spotify
+## 🏆 aux vs the rest
 
-| | Spotify | aux |
-|--|---------|-----|
-| Search & play | ✅ | ✅ |
-| Queue, playlists, favorites | ✅ | ✅ |
-| Shuffle, repeat, EQ, sleep timer | ✅ | ✅ |
-| Synced lyrics | ✅ | ✅ |
-| **AI chat companion** | ❌ | ✅ |
-| **Terminal / keyboard-only** | ❌ | ✅ |
-| **Open source** | ❌ | ✅ |
-| **Free forever** | ❌ | ✅ |
-| **1000+ audio sources** | ❌ | ✅ |
-| Multi-device | ✅ | ❌ |
-| Offline downloads | ✅ | ❌ |
+| | Spotify | YouTube | aux |
+|--|---------|---------|-----|
+| Search & play | ✅ | ✅ | ✅ |
+| Queue, playlists, favorites | ✅ | ✅ | ✅ |
+| Shuffle, repeat, EQ, sleep timer | ✅ | ✅ | ✅ |
+| Synced lyrics | ✅ | ❌ | ✅ |
+| **AI chat companion** | ❌ | ❌ | ✅ |
+| **Natural language control** | ❌ | ❌ | ✅ |
+| **Terminal / keyboard-only** | ❌ | ❌ | ✅ |
+| **1000+ audio sources** | ❌ | ❌ | ✅ |
+| **Open source** | ❌ | ❌ | ✅ |
+| **Free forever** | ❌ | ❌ | ✅ |
+| Multi-device sync | ✅ | ✅ | ❌ |
+| Offline downloads | ✅ | ✅ | ❌ |
 
 ## 🛠️ Built with
 
