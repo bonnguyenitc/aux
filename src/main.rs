@@ -504,7 +504,7 @@ async fn run_chat_mode(
                     println!("  {} {}\n", "🤖:".bold().cyan(), chat_response.message);
                     for action in &chat_response.action {
                         // Search is special — break out to the play loop
-                        if let ai::AiAction::Search { ref query } = action {
+                        if let ai::AiAction::Search { ref query, .. } = action {
                             println!("  {} Chat ended.\n", "👋".dimmed());
                             return Ok(Some(InteractiveAction::SearchFromChat(
                                 query.clone(),
@@ -632,10 +632,12 @@ async fn process_chat_message(
                 println!("  {} {}\n", "🤖:".bold().cyan(), chat_response.message);
                 for action in &chat_response.action {
                     // Search from CLI: trigger cmd_search directly
-                    if let ai::AiAction::Search { ref query } = action {
-                        let source = config.media.default_source.clone();
+                    if let ai::AiAction::Search { ref query, ref source } = action {
+                        let resolved_source = source
+                            .as_deref()
+                            .unwrap_or(&config.media.default_source);
                         if let Err(e) =
-                            cmd_search(query, config.player.search_results, &source, config, db).await
+                            cmd_search(query, config.player.search_results, resolved_source, config, db).await
                         {
                             println!("  {} {}\n", "❌".red(), e);
                         }
@@ -1538,12 +1540,19 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 let mut action_iter = actions.into_iter();
                                 while let Some(action) = action_iter.next() {
                                     match action {
-                                        ai::AiAction::Search { ref query } => {
+                                        ai::AiAction::Search { ref query, ref source } => {
+                                            let resolved_source = source
+                                                .as_deref()
+                                                .and_then(crate::media::Source::from_str_arg)
+                                                .unwrap_or_else(|| app.search_source.clone());
+                                            // Update TUI search source to match
+                                            app.search_source = resolved_source.clone();
                                             let q = query.clone();
                                             app.search_input = query.clone();
-                                            app.set_status(format!("🔍 AI searching: {}", query));
+                                            let source_label = resolved_source.display_name();
+                                            app.set_status(format!("🔍 AI searching on {}: {}", source_label, query));
                                             let fetch_count = app.search_page_size * 5;
-                                            let source = app.search_source.clone();
+                                            let source = resolved_source;
                                             pending_search = Some((
                                                 tokio::spawn(async move {
                                                     let yt = YtDlp::new();

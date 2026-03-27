@@ -36,7 +36,13 @@ pub enum AiAction {
     SetSleep { minutes: u32 },
     CancelSleep,
     // ── Search & play ──
-    Search { query: String },
+    Search {
+        query: String,
+        /// Optional source override: "youtube", "soundcloud", "ytmusic".
+        /// When omitted the current TUI search source is used.
+        #[serde(default)]
+        source: Option<String>,
+    },
     /// Play a specific item from the current search results (1-based index).
     PlayResult { index: usize },
     /// Pick a random item from the current search results and play it.
@@ -327,7 +333,8 @@ Available actions:
 - {"type": "cancel_sleep"}
 
 ### Search & Play
-- {"type": "search", "query": "<search terms>"} — search for music
+- {"type": "search", "query": "<search terms>"} — search for music (default source)
+- {"type": "search", "query": "<search terms>", "source": "soundcloud"} — search on a specific source (youtube, soundcloud, ytmusic)
 - {"type": "play_result", "index": <1-based>} — play item from search results
 - {"type": "play_random"} — play random item from search results
 
@@ -348,6 +355,8 @@ Available actions:
 
 Examples:
 - "tìm bài Shape of You" → {"action":{"type":"search","query":"Shape of You Ed Sheeran"},"message":"Đang tìm cho bạn! 🔍"}
+- "tìm nhạc lofi trên SoundCloud" → {"action":{"type":"search","query":"lofi beats","source":"soundcloud"},"message":"Tìm trên SoundCloud! ☁️"}
+- "search Adele on YT Music" → {"action":{"type":"search","query":"Adele","source":"ytmusic"},"message":"Searching YT Music! ♫"}
 - "phát bài Shape of You" → {"action":[{"type":"search","query":"Shape of You Ed Sheeran"},{"type":"play_result","index":1}],"message":"Đang tìm và phát! 🎵"}
 - "phát ngẫu nhiên nhạc buồn" → {"action":[{"type":"search","query":"nhạc buồn"},{"type":"play_random"}],"message":"Random 1 bài buồn! 🎲"}
 - "chọn bài thứ 2" → {"action":{"type":"play_result","index":2},"message":"Phát bài thứ 2! ▶️"}
