@@ -2,7 +2,7 @@
 name = "aux"
 version = "0.1.0"
 edition = "2021"
-description = "Listen music with AI agent — universal audio player powered by yt-dlp"
+description = "AI-powered terminal music player — search, play, and control 1000+ sources through an AI agent"
 license = "MIT"
 
 [dependencies]

@@ -6,7 +6,7 @@ Thanks for wanting to help! aux is open to contributions of all kinds.
 
 ```bash
 # Clone & build
-git clone https://github.com/bonnguyenitc/duet.git
+git clone https://github.com/bonnguyenitc/aux.git
 cd duet
 brew install yt-dlp mpv    # macOS
 cargo build
@@ -20,8 +20,8 @@ cargo run
 
 ## Ways to Contribute
 
-- 🐛 **Bug reports** — [Open an issue](https://github.com/bonnguyenitc/duet/issues)
-- 💡 **Feature ideas** — Start a [Discussion](https://github.com/bonnguyenitc/duet/discussions)
+- 🐛 **Bug reports** — [Open an issue](https://github.com/bonnguyenitc/aux/issues)
+- 💡 **Feature ideas** — Start a [Discussion](https://github.com/bonnguyenitc/aux/discussions)
 - 🔧 **Code** — Pick an issue labeled `good first issue` and submit a PR
 - 📖 **Docs** — Improve README, add examples, fix typos
 
