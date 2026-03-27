@@ -354,20 +354,20 @@ Available actions:
 - {"type": "show_panel", "panel": "<name>"} — show a panel (queue, favorites, history, lyrics, search, chat, playlists)
 
 Examples:
-- "tìm bài Shape of You" → {"action":{"type":"search","query":"Shape of You Ed Sheeran"},"message":"Đang tìm cho bạn! 🔍"}
-- "tìm nhạc lofi trên SoundCloud" → {"action":{"type":"search","query":"lofi beats","source":"soundcloud"},"message":"Tìm trên SoundCloud! ☁️"}
+- "find Shape of You" → {"action":{"type":"search","query":"Shape of You Ed Sheeran"},"message":"Searching for you! 🔍"}
+- "find lofi on SoundCloud" → {"action":{"type":"search","query":"lofi beats","source":"soundcloud"},"message":"Searching SoundCloud! ☁️"}
 - "search Adele on YT Music" → {"action":{"type":"search","query":"Adele","source":"ytmusic"},"message":"Searching YT Music! ♫"}
-- "phát bài Shape of You" → {"action":[{"type":"search","query":"Shape of You Ed Sheeran"},{"type":"play_result","index":1}],"message":"Đang tìm và phát! 🎵"}
-- "phát ngẫu nhiên nhạc buồn" → {"action":[{"type":"search","query":"nhạc buồn"},{"type":"play_random"}],"message":"Random 1 bài buồn! 🎲"}
-- "chọn bài thứ 2" → {"action":{"type":"play_result","index":2},"message":"Phát bài thứ 2! ▶️"}
-- "bài tiếp theo" → {"action":{"type":"next"},"message":"Bài tiếp theo nhé! ⏭"}
-- "thêm vào yêu thích" → {"action":{"type":"add_favorite"},"message":"Đã thêm vào yêu thích! ❤️"}
-- "xem queue" → {"action":{"type":"show_panel","panel":"queue"},"message":"Đây là queue! 📋"}
-- "tạo playlist Chill" → {"action":{"type":"create_playlist","name":"Chill"},"message":"Đã tạo playlist Chill! 🎶"}
-- "thêm vào playlist Chill" → {"action":{"type":"add_to_playlist","playlist":"Chill"},"message":"Đã thêm vào Chill! ➕"}
-- "phát playlist Chill" → {"action":{"type":"play_playlist","name":"Chill"},"message":"Phát playlist Chill! 🎵"}
-- "tạm dừng" → {"action":{"type":"pause"},"message":"Đã tạm dừng! ⏸️"}
-- "tăng volume" → {"action":{"type":"set_volume","value":85},"message":"Đã tăng lên 85%! 🔊"}
+- "play Shape of You" → {"action":[{"type":"search","query":"Shape of You Ed Sheeran"},{"type":"play_result","index":1}],"message":"Searching and playing! 🎵"}
+- "play random sad music" → {"action":[{"type":"search","query":"sad songs"},{"type":"play_random"}],"message":"Playing a random sad track! 🎲"}
+- "play the 2nd one" → {"action":{"type":"play_result","index":2},"message":"Playing track #2! ▶️"}
+- "next track" → {"action":{"type":"next"},"message":"Skipping to the next one! ⏭"}
+- "add to favorites" → {"action":{"type":"add_favorite"},"message":"Added to favorites! ❤️"}
+- "show queue" → {"action":{"type":"show_panel","panel":"queue"},"message":"Here's your queue! 📋"}
+- "create playlist Chill" → {"action":{"type":"create_playlist","name":"Chill"},"message":"Created playlist Chill! 🎶"}
+- "add to playlist Chill" → {"action":{"type":"add_to_playlist","playlist":"Chill"},"message":"Added to Chill! ➕"}
+- "play playlist Chill" → {"action":{"type":"play_playlist","name":"Chill"},"message":"Playing playlist Chill! 🎵"}
+- "pause" → {"action":{"type":"pause"},"message":"Paused! ⏸️"}
+- "turn up the volume" → {"action":{"type":"set_volume","value":85},"message":"Volume set to 85%! 🔊"}
 
 IMPORTANT: Your response must ALWAYS be valid JSON. Never add text outside the JSON object.
 "#,
