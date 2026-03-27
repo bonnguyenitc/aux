@@ -10,7 +10,7 @@ aux is an open-source terminal music player with a built-in AI agent. Instead of
 
 No browser. No ads. No subscriptions. Built in Rust.
 
-![aux demo](demo/demo-aux.gif)
+![aux demo](demo/social-preview.png)
 
 ## ⚡ Install
 
