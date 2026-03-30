@@ -1,27 +1,68 @@
-# aux 🎵 — AI-Powered Terminal Music Player
+<p align="center">
+  <img src="demo/social-preview.png" alt="aux — AI-powered terminal music player" width="720" />
+</p>
 
-[![GitHub stars](https://img.shields.io/github/stars/bonnguyenitc/aux?style=social)](https://github.com/bonnguyenitc/aux)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Built with Rust](https://img.shields.io/badge/Built%20with-Rust-dea584.svg)](https://www.rust-lang.org/)
+<h1 align="center">aux 🎵</h1>
+<p align="center"><b>Tell your AI agent what to play. It searches, picks, and plays — automatically.</b></p>
 
-> **Tell your AI agent what to play. It searches, picks, and plays — automatically.**
+<p align="center">
+  <a href="https://github.com/bonnguyenitc/aux/stargazers"><img src="https://img.shields.io/github/stars/bonnguyenitc/aux?style=flat-square&color=f5a623" alt="GitHub stars" /></a>
+  <a href="https://github.com/bonnguyenitc/aux/releases"><img src="https://img.shields.io/github/v/release/bonnguyenitc/aux?style=flat-square&color=4fc3f7" alt="Latest release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License: MIT" /></a>
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Built%20with-Rust-dea584.svg?style=flat-square" alt="Built with Rust" /></a>
+</p>
 
-aux is an open-source terminal music player with a built-in AI agent. Instead of clicking through menus, just tell it what you want in natural language. The AI agent searches 1000+ sources, controls playback, manages your library, and chains multi-step actions — all from a single chat message.
+<p align="center">
+  <a href="#-install">Install</a> · <a href="#-ai-agent-control-everything-by-chatting">AI Agent</a> · <a href="#-1000-music-sources-zero-ads">Sources</a> · <a href="#-aux-vs-the-rest">Compare</a> · <a href="CONTRIBUTING.md">Contribute</a>
+</p>
 
-No browser. No ads. No subscriptions. Built in Rust.
+---
 
-![aux demo](demo/social-preview.png)
+<p align="center">
+  <img src="demo/demo-aux.gif" alt="aux demo — AI chat controlling terminal music player" width="720" />
+</p>
+
+aux is an **open-source terminal music player** with a built-in **AI agent**. Instead of clicking through menus, just tell it what you want in natural language. The AI agent searches **1000+ sources**, controls playback, manages your library, and chains multi-step actions — all from a single chat message.
+
+**No browser. No ads. No subscriptions. Built in Rust.**
 
 ## ⚡ Install
 
+**One command:**
+
 ```bash
-brew install yt-dlp mpv        # dependencies
-cargo install --path .         # install aux
+curl -sSL https://raw.githubusercontent.com/bonnguyenitc/aux/main/install.sh | sh
 ```
+
+<details>
+<summary><b>Manual install</b></summary>
+
+```bash
+# Install dependencies
+brew install yt-dlp mpv           # macOS
+# sudo apt install yt-dlp mpv     # Ubuntu/Debian
+# sudo pacman -S yt-dlp mpv       # Arch
+
+# Install aux
+cargo install --path .
+```
+
+</details>
+
+## 🎬 30-Second Quickstart
+
+```bash
+aux                                  # launch the TUI player
+aux chat "play lofi coding music"    # AI finds & plays music for you
+aux search "Adele"                   # manual search
+aux play <url>                       # play any URL directly
+```
+
+Press `c` to open AI chat inside the TUI. Press `?` for help. That's it.
 
 ## 🤖 AI Agent: Control Everything by Chatting
 
-The AI agent is not a chatbot — it's a **player controller**. Every message you send is parsed into executable actions. The agent can compose multi-step pipelines from a single sentence.
+The AI agent is **not a chatbot** — it's a **player controller**. Every message you send is parsed into executable actions. The agent can compose multi-step pipelines from a single sentence.
 
 ### Just say what you want
 
@@ -78,17 +119,6 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp), aux plays audio from YouT
 - 🎛️ **Full player** — queue, playlists, favorites, EQ, shuffle, repeat, sleep timer
 - ⌨️ **Keyboard-only** — never leave your workflow
 - 🔗 **Composable actions** — chain search + play + add-to-playlist in one sentence
-
-## 🎬 Quick start
-
-```bash
-aux                                  # launch TUI (9 panels, full control)
-aux search "lofi coding music"       # search & pick from CLI
-aux play <url>                       # play any URL directly
-aux chat "play something chill"      # let AI agent handle it
-```
-
-Press `Tab` to switch panels, `c` to open chat, `?` for help.
 
 ## ⌨️ Keybindings
 
@@ -198,26 +228,37 @@ Config file: `~/.config/aux/config.toml`
 
 ## 🏆 aux vs the rest
 
-|                                  | Spotify | YouTube | aux |
-| -------------------------------- | ------- | ------- | --- |
-| Search & play                    | ✅      | ✅      | ✅  |
-| Queue, playlists, favorites      | ✅      | ✅      | ✅  |
-| Shuffle, repeat, EQ, sleep timer | ✅      | ✅      | ✅  |
-| Synced lyrics                    | ✅      | ❌      | ✅  |
-| **AI agent control**             | ❌      | ❌      | ✅  |
-| **Natural language playback**    | ❌      | ❌      | ✅  |
-| **Composable action chains**     | ❌      | ❌      | ✅  |
-| **Terminal-native**              | ❌      | ❌      | ✅  |
-| **1000+ audio sources**          | ❌      | ❌      | ✅  |
-| **Open source**                  | ❌      | ❌      | ✅  |
-| **Free forever**                 | ❌      | ❌      | ✅  |
-| Multi-device sync                | ✅      | ✅      | ❌  |
-| Offline downloads                | ✅      | ✅      | ❌  |
+|                                  | Spotify | YouTube | cmus  | aux     |
+| -------------------------------- | ------- | ------- | ----- | ------- |
+| Search & play                    | ✅      | ✅      | ❌    | ✅      |
+| Queue, playlists, favorites      | ✅      | ✅      | ✅    | ✅      |
+| Shuffle, repeat, EQ, sleep timer | ✅      | ✅      | ✅    | ✅      |
+| Synced lyrics                    | ✅      | ❌      | ❌    | ✅      |
+| **AI agent control**             | ❌      | ❌      | ❌    | ✅      |
+| **Natural language playback**    | ❌      | ❌      | ❌    | ✅      |
+| **Composable action chains**     | ❌      | ❌      | ❌    | ✅      |
+| **Terminal-native**              | ❌      | ❌      | ✅    | ✅      |
+| **1000+ audio sources**          | ❌      | ❌      | ❌    | ✅      |
+| **Open source**                  | ❌      | ❌      | ✅    | ✅      |
+| **Free forever**                 | ❌      | ❌      | ✅    | ✅      |
+| Multi-device sync                | ✅      | ✅      | ❌    | ❌      |
+| Offline downloads                | ✅      | ✅      | ✅    | ❌      |
 
 ## 🛠️ Built with
 
-Rust · [ratatui](https://github.com/ratatui/ratatui) · [mpv](https://mpv.io/) · [yt-dlp](https://github.com/yt-dlp/yt-dlp) · SQLite
+[Rust](https://www.rust-lang.org/) · [ratatui](https://github.com/ratatui/ratatui) · [mpv](https://mpv.io/) · [yt-dlp](https://github.com/yt-dlp/yt-dlp) · [SQLite](https://www.sqlite.org/)
 
-## License
+## 📄 License
 
-MIT
+MIT — see [LICENSE](LICENSE) for details.
+
+---
+
+<p align="center">
+  <b>If you find aux useful, please consider giving it a ⭐</b><br/>
+  It helps others discover the project and motivates continued development.
+</p>
+
+<p align="center">
+  <a href="https://github.com/bonnguyenitc/aux/issues">Report Bug</a> · <a href="https://github.com/bonnguyenitc/aux/discussions">Request Feature</a> · <a href="CONTRIBUTING.md">Contribute</a>
+</p>

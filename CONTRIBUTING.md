@@ -7,7 +7,7 @@ Thanks for wanting to help! aux is open to contributions of all kinds.
 ```bash
 # Clone & build
 git clone https://github.com/bonnguyenitc/aux.git
-cd duet
+cd aux
 brew install yt-dlp mpv    # macOS
 cargo build
 

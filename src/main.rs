@@ -553,28 +553,40 @@ async fn cmd_chat_cli(
 
     let resolved = config.ai.as_ref().unwrap().resolve(profile)?;
 
-    // Build a minimal VideoContext from StateFile (if a session is active)
-    let state = match crate::player::state::StateFile::read() {
-        Ok(s) => s,
+    // Build a VideoContext from StateFile if a session is active,
+    // otherwise create an empty context so search/play commands still work.
+    let mut context = match crate::player::state::StateFile::read() {
+        Ok(s) => VideoContext::new(s.video, None),
         Err(_) => {
-            println!(
-                "  {}",
-                "No active aux session. Start one with: aux play <url>".dimmed()
-            );
-            return Ok(());
+            let empty_video = crate::media::MediaInfo {
+                id: String::new(),
+                title: String::new(),
+                channel: None,
+                duration: None,
+                view_count: None,
+                thumbnail: None,
+                description: None,
+                url: String::new(),
+                source: crate::media::Source::default(),
+                extractor_key: None,
+            };
+            VideoContext::new(empty_video, None)
         }
     };
 
-    let mut context = VideoContext::new(state.video, None);
-
     if message.is_empty() {
         // Interactive loop
+        let header_ctx = if context.video.id.is_empty() {
+            "no track playing".to_string()
+        } else {
+            format!("playing: {}", context.video.title)
+        };
         println!(
-            "\n  {} {} {}\n",
+            "\n  {} {}",
             "💬 Chat".bold().cyan(),
-            "(playing:".dimmed(),
-            format!("{})", context.video.title).dimmed()
+            format!("({})", header_ctx).dimmed(),
         );
+        println!();
         println!(
             "  {} type a message, /quit to exit · try \"tăng volume\" or \"tìm bài lofi\"\n",
             "💡".dimmed()
