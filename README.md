@@ -132,6 +132,18 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp), aux plays audio from YouT
 | `e`     | Cycle EQ preset 🎛️ |     | `t`       | Sleep timer 😴     |
 | `c`     | Open AI chat 💬    |     | `?`       | Help               |
 
+### Results panel
+
+| Key       | Action                                       |
+| --------- | -------------------------------------------- |
+| `Enter`   | Play selected result                         |
+| `Shift+P` | **Queue ALL results and play from first** 🎵 |
+| `a`       | Add selected result to queue                 |
+| `f`       | Toggle favorite                              |
+| `l`       | Add to playlist                              |
+| `←` `→`  | Page prev / next                             |
+| `/`       | New search                                   |
+
 ## 🎵 CLI reference
 
 <details>

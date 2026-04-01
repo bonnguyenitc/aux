@@ -2658,6 +2658,55 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                 app.set_panel(Panel::Search);
                                 app.search_input.clear();
                             }
+                            // ── Play All: queue every result and start from first ─
+                            KeyCode::Char('P') => {
+                                if !app.all_search_results.is_empty() {
+                                    // Clear existing queue and replace with all results
+                                    library::queue::clear_queue(db).ok();
+                                    let mut added = 0usize;
+                                    for video in &app.all_search_results {
+                                        if library::queue::add_to_queue(db, video).unwrap_or(false) {
+                                            added += 1;
+                                        }
+                                    }
+                                    app.queue_items = library::queue::get_queue(db).unwrap_or_default();
+                                    // Pop and play the first item immediately
+                                    if let Ok(Some(entry)) = library::queue::pop_next(db) {
+                                        app.queue_items = library::queue::get_queue(db).unwrap_or_default();
+                                        let video = crate::media::MediaInfo {
+                                            id: entry.video_id.clone(),
+                                            title: entry.title.clone(),
+                                            channel: entry.channel.clone(),
+                                            url: entry.url.clone(),
+                                            duration: entry.duration_secs.map(|d| d as f64),
+                                            view_count: None,
+                                            thumbnail: None,
+                                            description: None,
+                                            source: crate::media::Source::default(),
+                                            extractor_key: None,
+                                        };
+                                        let url = entry.url.clone();
+                                        let is_fav = library::favorites::is_favorite(db, &entry.video_id).unwrap_or(false);
+                                        app.set_status(format!(
+                                            "▶ Playing all ({} tracks) — {}",
+                                            added,
+                                            entry.title
+                                        ));
+                                        pending_stream = Some((
+                                            tokio::spawn(async move {
+                                                let yt = YtDlp::new();
+                                                use crate::media::MediaBackend;
+                                                yt.get_stream_url(&url).await
+                                            }),
+                                            video,
+                                            is_fav,
+                                            false,
+                                        ));
+                                    }
+                                } else {
+                                    app.set_status("No results to play".to_string());
+                                }
+                            }
                             // ── Page navigation ──────────────────────────────
                             KeyCode::Right => {
                                 if app.search_page + 1 < app.search_total_pages() {
