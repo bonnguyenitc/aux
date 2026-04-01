@@ -19,7 +19,7 @@
 ---
 
 <p align="center">
-  <img src="demo/demo-aux.gif" alt="aux demo — AI chat controlling terminal music player" width="720" />
+  <img src="demo/demo-aux.mov" alt="aux demo — AI chat controlling terminal music player" width="720" />
 </p>
 
 aux is an **open-source terminal music player** with a built-in **AI agent**. Instead of clicking through menus, just tell it what you want in natural language. The AI agent searches **1000+ sources**, controls playback, manages your library, and chains multi-step actions — all from a single chat message.
@@ -141,7 +141,7 @@ Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp), aux plays audio from YouT
 | `a`       | Add selected result to queue                 |
 | `f`       | Toggle favorite                              |
 | `l`       | Add to playlist                              |
-| `←` `→`  | Page prev / next                             |
+| `←` `→`   | Page prev / next                             |
 | `/`       | New search                                   |
 
 ## 🎵 CLI reference
@@ -240,21 +240,21 @@ Config file: `~/.config/aux/config.toml`
 
 ## 🏆 aux vs the rest
 
-|                                  | Spotify | YouTube | cmus  | aux     |
-| -------------------------------- | ------- | ------- | ----- | ------- |
-| Search & play                    | ✅      | ✅      | ❌    | ✅      |
-| Queue, playlists, favorites      | ✅      | ✅      | ✅    | ✅      |
-| Shuffle, repeat, EQ, sleep timer | ✅      | ✅      | ✅    | ✅      |
-| Synced lyrics                    | ✅      | ❌      | ❌    | ✅      |
-| **AI agent control**             | ❌      | ❌      | ❌    | ✅      |
-| **Natural language playback**    | ❌      | ❌      | ❌    | ✅      |
-| **Composable action chains**     | ❌      | ❌      | ❌    | ✅      |
-| **Terminal-native**              | ❌      | ❌      | ✅    | ✅      |
-| **1000+ audio sources**          | ❌      | ❌      | ❌    | ✅      |
-| **Open source**                  | ❌      | ❌      | ✅    | ✅      |
-| **Free forever**                 | ❌      | ❌      | ✅    | ✅      |
-| Multi-device sync                | ✅      | ✅      | ❌    | ❌      |
-| Offline downloads                | ✅      | ✅      | ✅    | ❌      |
+|                                  | Spotify | YouTube | cmus | aux |
+| -------------------------------- | ------- | ------- | ---- | --- |
+| Search & play                    | ✅      | ✅      | ❌   | ✅  |
+| Queue, playlists, favorites      | ✅      | ✅      | ✅   | ✅  |
+| Shuffle, repeat, EQ, sleep timer | ✅      | ✅      | ✅   | ✅  |
+| Synced lyrics                    | ✅      | ❌      | ❌   | ✅  |
+| **AI agent control**             | ❌      | ❌      | ❌   | ✅  |
+| **Natural language playback**    | ❌      | ❌      | ❌   | ✅  |
+| **Composable action chains**     | ❌      | ❌      | ❌   | ✅  |
+| **Terminal-native**              | ❌      | ❌      | ✅   | ✅  |
+| **1000+ audio sources**          | ❌      | ❌      | ❌   | ✅  |
+| **Open source**                  | ❌      | ❌      | ✅   | ✅  |
+| **Free forever**                 | ❌      | ❌      | ✅   | ✅  |
+| Multi-device sync                | ✅      | ✅      | ❌   | ❌  |
+| Offline downloads                | ✅      | ✅      | ✅   | ❌  |
 
 ## 🛠️ Built with
 
