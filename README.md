@@ -19,7 +19,7 @@
 ---
 
 <p align="center">
-  <img src="demo/demo-aux.mov" alt="aux demo — AI chat controlling terminal music player" width="720" />
+  <img src="demo/demo-aux.mp4" alt="aux demo — AI chat controlling terminal music player" width="720" />
 </p>
 
 aux is an **open-source terminal music player** with a built-in **AI agent**. Instead of clicking through menus, just tell it what you want in natural language. The AI agent searches **1000+ sources**, controls playback, manages your library, and chains multi-step actions — all from a single chat message.
