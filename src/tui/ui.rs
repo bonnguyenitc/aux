@@ -4,7 +4,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{
         Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, Table, TableState, Tabs,
+        ScrollbarState, Table, TableState,
     },
     Frame,
 };
@@ -29,20 +29,29 @@ const ROW_ALT: Color = Color::Rgb(28, 28, 42); // Alternating row background
 pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
+    // ── Option C layout: compact chrome with ╞═══╡ separators ─────────
+    // chrome = 7 lines: header(1) + sep(1) + np_progress(1) + np_info(1) + sep(1) + keybind(1)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Header + tabs
-            Constraint::Min(3),    // Body panel
-            Constraint::Length(5), // Now playing (progress + 2-line info)
-            Constraint::Length(2), // Keybind bar
+            Constraint::Length(1), // [0] Header bar  (logo + tabs, no border)
+            Constraint::Length(1), // [1] Separator ╞═══╡
+            Constraint::Min(3),    // [2] Body panel
+            Constraint::Length(1), // [3] Separator ╞═══╡
+            Constraint::Length(1), // [4] Now playing — progress bar
+            Constraint::Length(1), // [5] Now playing — info line
+            Constraint::Length(1), // [6] Separator ╞═══╡
+            Constraint::Length(1), // [7] Keybind bar
         ])
         .split(area);
 
     draw_header(frame, chunks[0], app);
-    draw_body(frame, chunks[1], app);
-    draw_now_playing_bar(frame, chunks[2], app);
-    draw_keybind_bar(frame, chunks[3], app);
+    draw_separator(frame, chunks[1]);
+    draw_body(frame, chunks[2], app);
+    draw_separator(frame, chunks[3]);
+    draw_now_playing_bar(frame, chunks[4], chunks[5], app);
+    draw_separator(frame, chunks[6]);
+    draw_keybind_bar(frame, chunks[7], app);
 
     // ── Modal overlay: playlist picker ──────────────────────────────
     if app.playlist_picker.is_some() {
@@ -53,36 +62,16 @@ pub fn draw(frame: &mut Frame, app: &App) {
 // ── Header / Tabs ──────────────────────────────────────────────────────────
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
-    let layout = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(14), Constraint::Min(10)])
-        .split(area);
-
-    // Brand
-    let brand = Paragraph::new(Line::from(vec![
-        Span::styled("  🎵 ", Style::default()),
-        Span::styled("aux", Style::default().fg(BRAND).bold()),
-        Span::styled(" ", Style::default()),
-    ]))
-    .block(
-        Block::default()
-            .borders(Borders::BOTTOM | Borders::RIGHT)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(DIM)),
-    );
-    frame.render_widget(brand, layout[0]);
-
-    // Tabs
-    let tab_titles = vec![
-        "🔍Search",
-        "📋Results",
-        "🎵Lyrics",
-        "📦Queue",
-        "❤Favs",
-        "⏱History",
-        "🎶Lists",
-        "💬Chat",
-        "❓Help",
+    let tab_defs: &[(&str, &str)] = &[
+        ("🔍", "Search"),
+        ("📋", "Results"),
+        ("🎵", "Lyrics"),
+        ("📦", "Queue"),
+        ("❤", "Favs"),
+        ("⏱", "History"),
+        ("🎶", "Lists"),
+        ("💬", "Chat"),
+        ("❓", "Help"),
     ];
     let selected = match app.panel {
         Panel::Search => 0,
@@ -96,23 +85,46 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         Panel::Help => 8,
     };
 
-    let tabs = Tabs::new(tab_titles)
-        .select(selected)
-        .block(
-            Block::default()
-                .borders(Borders::BOTTOM)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(DIM)),
-        )
-        .style(Style::default().fg(DIM))
-        .highlight_style(
-            Style::default()
-                .fg(BRAND)
-                .bold()
-                .add_modifier(Modifier::UNDERLINED),
-        );
+    let mut spans: Vec<Span> = vec![
+        Span::styled(" 🎵 ", Style::default()),
+        Span::styled("aux", Style::default().fg(BRAND).bold()),
+        Span::styled("  ·  ", Style::default().fg(DIM)),
+    ];
 
-    frame.render_widget(tabs, layout[1]);
+    for (i, (icon, name)) in tab_defs.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled("  ", Style::default().fg(DIM)));
+        }
+        let label = format!("{}{}", icon, name);
+        if i == selected {
+            spans.push(Span::styled(
+                label,
+                Style::default()
+                    .fg(BRAND)
+                    .bold()
+                    .add_modifier(Modifier::UNDERLINED),
+            ));
+        } else {
+            spans.push(Span::styled(label, Style::default().fg(DIM)));
+        }
+    }
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+// ── Section separator ╞═══╡ ─────────────────────────────────────────────────
+
+fn draw_separator(frame: &mut Frame, area: Rect) {
+    let w = area.width as usize;
+    let bar = if w >= 2 {
+        format!("╞{}╡", "═".repeat(w.saturating_sub(2)))
+    } else {
+        "═".repeat(w)
+    };
+    frame.render_widget(
+        Paragraph::new(bar).style(Style::default().fg(DIM)),
+        area,
+    );
 }
 
 // ── Body dispatch ──────────────────────────────────────────────────────────
@@ -1265,22 +1277,22 @@ fn help_row<'a>(key: &'a str, desc: &'a str) -> Line<'a> {
 }
 
 // ── Now Playing bar ────────────────────────────────────────────────────────
+// progress_area: 1-line progress bar
+// info_area:     1-line title + channel/meta
 
-pub fn draw_now_playing_bar(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_now_playing_bar(frame: &mut Frame, progress_area: Rect, info_area: Rect, app: &App) {
     if let Some(ref np) = app.now_playing {
-        draw_now_playing_active(frame, area, np);
+        draw_np_progress(frame, progress_area, np);
+        draw_np_info(frame, info_area, np);
     } else {
-        draw_now_playing_empty(frame, area);
+        draw_np_empty(frame, progress_area, info_area);
     }
 }
 
-fn draw_now_playing_active(frame: &mut Frame, area: Rect, np: &NowPlaying) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(4)])
-        .split(area);
+// ── Progress bar line ─────────────────────────────────────────────────────────
+// ▶ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━●────────────────── 2:14 / 4:33
 
-    // ── Custom Unicode progress bar ━━━━━━━●─────────────────
+fn draw_np_progress(frame: &mut Frame, area: Rect, np: &NowPlaying) {
     let progress = if np.duration_secs > 0 {
         (np.position_secs as f64 / np.duration_secs as f64).min(1.0)
     } else {
@@ -1289,17 +1301,26 @@ fn draw_now_playing_active(frame: &mut Frame, area: Rect, np: &NowPlaying) {
     let pos_str = format_duration(np.position_secs);
     let dur_str = format_duration(np.duration_secs);
     let time_label = format!(" {} / {} ", pos_str, dur_str);
-    let bar_width = chunks[0].width.saturating_sub(time_label.len() as u16 + 2) as usize;
+    // Leading icon: ▶ (playing) or ■ (paused)
+    let play_icon = if np.paused { " ■ " } else { " ▶ " };
+    let icon_w = play_icon.chars().count() as u16;
+    let bar_width = area
+        .width
+        .saturating_sub(time_label.len() as u16 + icon_w + 1) as usize;
     let fine_pos = progress * bar_width as f64;
     let filled = fine_pos as usize;
     let remaining = bar_width.saturating_sub(filled + 1);
-    // Half-block precision for smoother progress
     let sub_blocks = ["─", "╿", "╸", "━"];
     let frac = ((fine_pos - filled as f64) * sub_blocks.len() as f64) as usize;
     let knob = sub_blocks[frac.min(sub_blocks.len() - 1)];
 
-    let progress_line = Line::from(vec![
-        Span::styled(" ", Style::default()),
+    let line = Line::from(vec![
+        Span::styled(
+            play_icon,
+            Style::default()
+                .fg(if np.paused { WARN } else { BRAND })
+                .bold(),
+        ),
         Span::styled("━".repeat(filled), Style::default().fg(BRAND)),
         Span::styled("●", Style::default().fg(TEXT).bold()),
         Span::styled(knob, Style::default().fg(BRAND_DIM)),
@@ -1309,27 +1330,51 @@ fn draw_now_playing_active(frame: &mut Frame, area: Rect, np: &NowPlaying) {
         ),
         Span::styled(time_label, Style::default().fg(TEXT_DIM)),
     ]);
-    frame.render_widget(Paragraph::new(progress_line), chunks[0]);
+    frame.render_widget(Paragraph::new(line), area);
+}
 
-    // ── 2-line info block ──────────────────────────────────────
-    let status_icon = if np.paused { "⏸" } else { "▶" };
-    let title_max = area.width.saturating_sub(12) as usize;
-    let title: String = np.video.title.chars().take(title_max.max(20)).collect();
+// ── Info line ─────────────────────────────────────────────────────────────────
+// Title  ❤ 📋  ─────────────────────────  Channel · 🔊80% · 1.0x · 🔂  🔀
+
+fn draw_np_info(frame: &mut Frame, area: Rect, np: &NowPlaying) {
+    let title_max = (area.width as usize / 2).max(20);
+    let title: String = np.video.title.chars().take(title_max).collect();
     let channel = np.video.channel.as_deref().unwrap_or("Unknown");
     let repeat_label = np.repeat.label();
     let shuffle_str = if np.shuffle { "  🔀" } else { "" };
     let sleep_str = np
         .sleep_deadline
-        .map(|d| format!("  😴{}", d.format("%H:%M")))
+        .map(|d| format!(" 😴{}", d.format("%H:%M")))
         .unwrap_or_default();
+    let eq_part = if np.eq_preset != "flat" {
+        format!("  ·  🎛️{}", np.eq_preset)
+    } else {
+        String::new()
+    };
+    let speed_color = if (np.speed - 1.0).abs() > 0.01 { WARN } else { TEXT_DIM };
 
-    // Line 1: status + title + badges
-    let line1 = Line::from(vec![
-        Span::styled(
-            format!("  {} ", status_icon),
-            Style::default().fg(BRAND).bold(),
-        ),
-        Span::styled(&title, Style::default().fg(TEXT).bold()),
+    // Right-side meta text (approximate char count for spacer)
+    let right_text = format!(
+        "{}  ·  🔊{}%  ·  {}x{}{}{}  ",
+        channel, np.volume, np.speed, eq_part, repeat_label, shuffle_str
+    );
+    // Compute spacer to right-align meta
+    let left_len = 2 // leading spaces
+        + title.chars().count()
+        + if np.is_fav { 2 } else { 0 }
+        + if np.in_queue { 2 } else { 0 }
+        + 2; // trailing spaces before spacer
+    let right_len = right_text.chars().count() + sleep_str.chars().count();
+    let total_w = area.width as usize;
+    let spacer_len = total_w
+        .saturating_sub(left_len)
+        .saturating_sub(right_len)
+        .saturating_sub(2);
+    let spacer = "─".repeat(spacer_len.max(1));
+
+    let line = Line::from(vec![
+        Span::styled("  ", Style::default()),
+        Span::styled(title, Style::default().fg(TEXT).bold()),
         if np.is_fav {
             Span::styled(" ❤", Style::default().fg(LOVE))
         } else {
@@ -1340,36 +1385,20 @@ fn draw_now_playing_active(frame: &mut Frame, area: Rect, np: &NowPlaying) {
         } else {
             Span::raw("")
         },
-    ]);
-
-    // Line 2: channel · volume · speed · eq · repeat · shuffle · sleep
-    let eq_str = if np.eq_preset != "flat" {
-        format!("🎛️{}", np.eq_preset)
-    } else {
-        "🎛️flat".to_string()
-    };
-    let line2 = Line::from(vec![
-        Span::styled(format!("  {}", channel), Style::default().fg(TEXT_DIM)),
+        Span::styled(format!("  {}  ", spacer), Style::default().fg(DIM)),
+        Span::styled(channel, Style::default().fg(TEXT_DIM)),
         Span::styled("  ·  ", Style::default().fg(DIM)),
-        Span::styled(format!("🔊 {}%", np.volume), Style::default().fg(TEXT_DIM)),
+        Span::styled(format!("🔊{}%", np.volume), Style::default().fg(TEXT_DIM)),
         Span::styled("  ·  ", Style::default().fg(DIM)),
-        Span::styled(
-            format!("{}x", np.speed),
-            Style::default().fg(if (np.speed - 1.0).abs() > 0.01 {
-                WARN
-            } else {
-                TEXT_DIM
-            }),
-        ),
-        Span::styled("  ·  ", Style::default().fg(DIM)),
-        Span::styled(
-            &eq_str,
-            Style::default().fg(if np.eq_preset != "flat" {
-                ACCENT
-            } else {
-                TEXT_DIM
-            }),
-        ),
+        Span::styled(format!("{}x", np.speed), Style::default().fg(speed_color)),
+        if np.eq_preset != "flat" {
+            Span::styled(
+                format!("  ·  🎛️{}", np.eq_preset),
+                Style::default().fg(ACCENT),
+            )
+        } else {
+            Span::raw("")
+        },
         Span::styled("  ·  ", Style::default().fg(DIM)),
         Span::styled(
             format!("{}{}", repeat_label, shuffle_str),
@@ -1377,75 +1406,57 @@ fn draw_now_playing_active(frame: &mut Frame, area: Rect, np: &NowPlaying) {
         ),
         Span::styled(sleep_str, Style::default().fg(WARN)),
     ]);
-
-    let info = Paragraph::new(vec![line1, line2]).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(BRAND_DIM)),
-    );
-    frame.render_widget(info, chunks[1]);
+    frame.render_widget(Paragraph::new(line), area);
 }
 
-fn draw_now_playing_empty(frame: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(4)])
-        .split(area);
+// ── Empty state (no track) ────────────────────────────────────────────────────
 
+fn draw_np_empty(frame: &mut Frame, progress_area: Rect, info_area: Rect) {
     // Empty progress bar
-    let bar_width = chunks[0].width.saturating_sub(2) as usize;
+    let bar_width = progress_area.width.saturating_sub(5) as usize;
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(" ", Style::default()),
+            Span::styled(" ⏹  ", Style::default().fg(DIM)),
             Span::styled("─".repeat(bar_width), Style::default().fg(DIM)),
         ])),
-        chunks[0],
+        progress_area,
     );
-
-    // Empty info
-    let empty = Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled("  ⏹ ", Style::default().fg(DIM)),
-            Span::styled("No track playing", Style::default().fg(TEXT_DIM)),
-        ]),
-        Line::from(vec![
-            Span::styled("  Use ", Style::default().fg(DIM)),
+    // Hint text
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("  No track playing  ·  ", Style::default().fg(TEXT_DIM)),
             Span::styled("aux search", Style::default().fg(ACCENT)),
             Span::styled(" or ", Style::default().fg(DIM)),
             Span::styled("aux play <url>", Style::default().fg(ACCENT)),
             Span::styled(" to start", Style::default().fg(DIM)),
-        ]),
-    ])
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(DIM)),
+        ])),
+        info_area,
     );
-    frame.render_widget(empty, chunks[1]);
 }
 
-// ── Keybind bar ────────────────────────────────────────────────────────────
+// ── Keybind bar (1 line) ────────────────────────────────────────────────────
+// Layout: [status?] [panel keys]  │  ♪ [playback keys when playing]
 
 fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
-    // ── Line 1: status + panel-specific key badges ─────────────
-    let mut line1: Vec<Span> = Vec::new();
+    let mut spans: Vec<Span> = Vec::new();
 
+    // Status message (replaces first panel key slot when present)
     if let Some(ref msg) = app.status_message {
-        line1.push(Span::styled(
+        spans.push(Span::styled(
             format!(" ✦ {} ", msg),
             Style::default().fg(WARN),
         ));
-        line1.push(Span::styled("│ ", Style::default().fg(DIM)));
+        spans.push(Span::styled(" │ ", Style::default().fg(DIM)));
     } else {
-        line1.push(Span::styled(" ", Style::default()));
+        spans.push(Span::styled(" ", Style::default()));
     }
 
+    // Panel-specific keys
     let panel_keys: Vec<(&str, &str)> = match app.panel {
         Panel::Search => vec![
             ("Enter", "search"),
-            ("Tab", "panels"),
+            ("↑↓", "history"),
+            ("Ctrl+S", "source"),
             ("?", "help"),
             ("q", "quit"),
         ],
@@ -1455,34 +1466,34 @@ fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
             ("←→", "page"),
             ("a", "queue"),
             ("f", "fav"),
-            ("l", "playlist"),
-            ("Tab", "panel"),
+            ("l", "list"),
+            ("Tab", "panels"),
         ],
         Panel::Lyrics => vec![
             ("⇧↑↓", "scroll"),
             ("0", "auto"),
-            ("Tab", "panel"),
+            ("Tab", "panels"),
             ("Esc", "back"),
         ],
         Panel::Queue => vec![
             ("Enter", "play"),
             ("↑↓", "nav"),
             ("d", "remove"),
-            ("l", "playlist"),
-            ("Tab", "panel"),
+            ("l", "list"),
+            ("Tab", "panels"),
         ],
         Panel::Favorites => vec![
             ("Enter", "play"),
             ("↑↓", "nav"),
             ("d", "unfav"),
-            ("l", "playlist"),
-            ("Tab", "panel"),
+            ("l", "list"),
+            ("Tab", "panels"),
         ],
         Panel::History => vec![
             ("Enter", "replay"),
             ("↑↓", "nav"),
-            ("l", "playlist"),
-            ("Tab", "panel"),
+            ("l", "list"),
+            ("Tab", "panels"),
         ],
         Panel::Playlists => {
             if app.playlist_items_view.is_some() {
@@ -1498,7 +1509,7 @@ fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
                     ("↑↓", "nav"),
                     ("n", "new"),
                     ("d", "del"),
-                    ("p", "play"),
+                    ("p", "play all"),
                 ]
             }
         }
@@ -1506,36 +1517,36 @@ fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
             ("Enter", "send"),
             ("↑↓", "scroll"),
             ("Esc", "back"),
-            ("Tab", "panel"),
+            ("Tab", "panels"),
         ],
         Panel::Help => vec![("↑↓", "scroll"), ("Esc", "back")],
     };
 
     for (key, action) in &panel_keys {
-        line1.push(Span::styled(
+        spans.push(Span::styled(
             format!(" {} ", key),
             Style::default().fg(TEXT).bg(KEY_BG),
         ));
-        line1.push(Span::styled(
+        spans.push(Span::styled(
             format!(" {} ", action),
             Style::default().fg(TEXT_DIM),
         ));
     }
 
-    // ── Line 2: playback key badges ────────────────────────────
-    let line2 = if app.now_playing.is_some() {
+    // Playback keys — shown when a track is playing, separated by │
+    if app.now_playing.is_some() {
         let play_keys: Vec<(&str, &str)> = vec![
             ("Space", "⏯"),
             ("←→", "seek"),
             ("+/-", "vol"),
             ("]/[", "spd"),
             ("e", "eq"),
-            ("r", "repeat"),
+            ("r", "rep"),
             ("n", "next"),
-            ("f", "fav"),
             ("S", "stop"),
         ];
-        let mut spans: Vec<Span> = vec![Span::styled(" ♪ ", Style::default().fg(BRAND))];
+        spans.push(Span::styled("  │  ", Style::default().fg(DIM)));
+        spans.push(Span::styled("♪ ", Style::default().fg(BRAND)));
         for (key, action) in &play_keys {
             spans.push(Span::styled(
                 format!(" {} ", key),
@@ -1546,11 +1557,7 @@ fn draw_keybind_bar(frame: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(TEXT_DIM),
             ));
         }
-        Line::from(spans)
-    } else {
-        Line::from(Span::raw(""))
-    };
+    }
 
-    let bar = Paragraph::new(vec![Line::from(line1), line2]);
-    frame.render_widget(bar, area);
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }

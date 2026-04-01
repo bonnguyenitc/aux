@@ -125,7 +125,7 @@ impl App {
             all_search_results: Vec::new(),
             search_results: Vec::new(),
             search_page: 0,
-            search_page_size: 5,
+            search_page_size: 10,
             selected_index: 0,
             now_playing: None,
             status_message: None,

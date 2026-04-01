@@ -1517,10 +1517,18 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                 app.lyrics_auto_scroll = true;
                 if let Some(video) = pending_transcript_video.take() {
                     let mut new_ctx = VideoContext::new(video, transcript);
-                    // Preserve chat history and search results from previous context
+                    // Preserve chat history, search results, and position from previous context
                     if let Some(old_ctx) = ai_context.take() {
                         new_ctx.chat_history = old_ctx.chat_history;
                         new_ctx.search_results = old_ctx.search_results;
+                        new_ctx.current_position = old_ctx.current_position;
+                    } else {
+                        // ai_context was taken by an in-flight chat task;
+                        // recover position from the now-playing state.
+                        if let Some(ref np) = app.now_playing {
+                            new_ctx.current_position =
+                                std::time::Duration::from_secs(np.position_secs);
+                        }
                     }
                     ai_context = Some(new_ctx);
                     // Don't clear chat messages — keep conversation flowing
@@ -1533,7 +1541,14 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
             if handle.is_finished() {
                 let handle = pending_chat.take().unwrap();
                 match handle.await {
-                    Ok((ctx, result)) => {
+                    Ok((mut ctx, result)) => {
+                        // Race condition guard: if transcript arrived while this chat
+                        // was in-flight (ai_context was taken), pick it up now — once.
+                        if ctx.transcript.is_none() {
+                            if let Some(ref t) = app.transcript {
+                                ctx.transcript = Some(t.clone());
+                            }
+                        }
                         ai_context = Some(ctx);
                         match result {
                             Ok(chat_response) => {
@@ -3306,6 +3321,22 @@ async fn run_tui(config: &Config, db: &Database) -> Result<()> {
                                                 // Move context into spawned task;
                                                 // it will be returned on completion.
                                                 let mut ctx = ai_context.take().unwrap();
+                                                // —— Sync position (cheap, needed for lyric context) ——
+                                                if let Some(ref np) = app.now_playing {
+                                                    ctx.current_position =
+                                                        std::time::Duration::from_secs(np.position_secs);
+                                                }
+                                                // —— Sync search results if still empty ——
+                                                if ctx.search_results.is_empty() && !app.search_results.is_empty() {
+                                                    ctx.search_results = app
+                                                        .search_results
+                                                        .iter()
+                                                        .map(|v| v.title.clone())
+                                                        .collect();
+                                                }
+                                                // NOTE: transcript is NOT injected here — it is set
+                                                // once when pending_transcript completes (or on
+                                                // chat-task return if it arrived while in-flight).
                                                 pending_chat = Some(tokio::spawn(async move {
                                                     let result = ai_chat(&mut ctx, &input, &resolved).await;
                                                     (ctx, result)
